@@ -1,31 +1,95 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:hive/hive.dart';
 
 import 'database/app_database.dart';
 import 'models/session.dart';
 import 'screens/home_screen.dart';
 import 'services/notification_service.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+const MethodChannel _platform = MethodChannel('com.zsdev.fpsmonitor/channel');
 
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-
-  // Hive + persistence
-  await Hive.initFlutter();
+/// Opens Hive using the app's private files dir, fetched from the Kotlin side.
+/// (hive_flutter / path_provider is intentionally not used.)
+Future<void> _initStorage() async {
+  final dir = await _platform.invokeMethod<String>('getStorageDir');
+  if (dir == null || dir.isEmpty) {
+    throw StateError('Could not resolve storage directory');
+  }
+  Hive.init('$dir/hive');
   if (!Hive.isAdapterRegistered(1)) {
     Hive.registerAdapter(SessionAdapter());
   }
   await Hive.openBox<Session>(AppDatabase.sessionBoxName);
+}
 
-  // Local notifications (creates channel, asks POST_NOTIFICATIONS on 13+)
-  await NotificationService.instance.init();
+Future<void> main() async {
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  runApp(const FpsMonitorApp());
+    Object? startupError;
+    StackTrace? startupStack;
+
+    try {
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+      await _initStorage();
+      await NotificationService.instance.init();
+    } catch (e, st) {
+      startupError = e;
+      startupStack = st;
+      debugPrint('FPS Monitor startup failed: $e\n$st');
+    }
+
+    if (startupError != null) {
+      // Never leave the user on a black screen: show what went wrong.
+      runApp(StartupErrorApp(error: startupError, stack: startupStack));
+      return;
+    }
+
+    runApp(const FpsMonitorApp());
+  }, (error, stack) {
+    debugPrint('Uncaught error: $error\n$stack');
+  });
+}
+
+class StartupErrorApp extends StatelessWidget {
+  const StartupErrorApp({super.key, required this.error, this.stack});
+
+  final Object error;
+  final StackTrace? stack;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(useMaterial3: true),
+      home: Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'FPS Monitor failed to start',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  SelectableText('$error\n\n${stack ?? ''}'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class FpsMonitorApp extends StatelessWidget {
