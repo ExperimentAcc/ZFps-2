@@ -1,7 +1,6 @@
 plugins {
     id "com.android.application"
     id "kotlin-android"
-    id "dev.flutter.flutter-gradle-plugin"
 }
 
 def localProperties = new Properties()
@@ -9,6 +8,7 @@ def localPropertiesFile = new File(rootDir, "local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.withInputStream { stream -> localProperties.load(stream) }
 }
+def flutterSdkPath = localProperties.getProperty("flutter.sdk") ?: localProperties.getProperty("flutter.dir")
 def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0.0"
 def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
 
@@ -43,6 +43,12 @@ android {
             shrinkResources false
         }
     }
+}
+
+// Apply Flutter Gradle script via apply-from (same classloader as AGP,
+// so com.android.build.OutputFile from AGP 4.2.2 is visible to Flutter's plugin)
+if (flutterSdkPath != null) {
+    apply from: "$flutterSdkPath/packages/flutter_tools/gradle/flutter.gradle"
 }
 
 dependencies {
