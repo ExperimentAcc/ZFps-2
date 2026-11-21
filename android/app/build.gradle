@@ -80,7 +80,7 @@ afterEvaluate {
             def registrant = file("src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java")
             if (registrant.exists()) {
                 def content = registrant.text
-                content = content.replace("new io.flutter.plugins.pathprovider.PathProviderPlugin()", "null")
+                content = content.replace("flutterEngine.getPlugins().add(new io.flutter.plugins.pathprovider.PathProviderPlugin());", "// path_provider registration skipped (transitive dep, not used)")
                 registrant.text = content
             }
         }
