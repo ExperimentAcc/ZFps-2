@@ -33,7 +33,7 @@ android {
 
     defaultConfig {
         applicationId "com.zsdev.fpsmonitor"
-        minSdk 23
+        minSdk 24
         targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
