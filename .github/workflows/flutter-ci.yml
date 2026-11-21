@@ -38,11 +38,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-pub-
 
-      - name: Flutter doctor and pub get
+      - name: Flutter doctor
         run: |
           flutter --version
           flutter doctor
-          flutter pub get
+      - name: Flutter pub get
+        run: flutter pub get
 
       - name: Generate android/local.properties
         run: |
