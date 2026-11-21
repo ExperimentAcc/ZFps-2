@@ -14,7 +14,7 @@ def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "
 
 android {
     namespace "com.zsdev.fpsmonitor"
-    compileSdk 35
+    compileSdk 34
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
