@@ -9,12 +9,15 @@ import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 
 /**
- * Draws the floating statistics window in the top-right corner.
+ * Draws the floating statistics window (top-right by default).
+ * The window can be dragged anywhere on screen; its position is remembered.
  *
  * This is a regular (non-foreground) service: the [MonitorService]
  * foreground service keeps the process alive for the whole session.
@@ -28,6 +31,7 @@ class OverlayService : Service() {
     private var fpsText: TextView? = null
     private var tempText: TextView? = null
     private var ramText: TextView? = null
+    private var layoutParams: WindowManager.LayoutParams? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -59,23 +63,84 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
+                // x is measured from the right edge (Gravity.END), y from the top
                 gravity = Gravity.TOP or Gravity.END
-                x = dp(12)
-                y = dp(96)
+                val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+                x = prefs.getInt(KEY_X, dp(12))
+                y = prefs.getInt(KEY_Y, dp(96))
             }
+            enableDragging(view, wm, params)
             wm.addView(view, params)
             windowManager = wm
             overlayView = view
+            layoutParams = params
         } catch (t: Throwable) {
             // Never crash the process because of the overlay; monitoring continues in-app.
             t.printStackTrace()
             overlayView = null
             stopSelf()
         }
+    }
+
+    /** Lets the user drag the overlay anywhere; position is saved when released. */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun enableDragging(view: View, wm: WindowManager, params: WindowManager.LayoutParams) {
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
+        var startX = 0
+        var startY = 0
+        var touchX = 0f
+        var touchY = 0f
+        var dragging = false
+
+        view.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    startX = params.x
+                    startY = params.y
+                    touchX = event.rawX
+                    touchY = event.rawY
+                    dragging = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - touchX).toInt()
+                    val dy = (event.rawY - touchY).toInt()
+                    if (!dragging && (Math.abs(dx) > touchSlop || Math.abs(dy) > touchSlop)) {
+                        dragging = true
+                    }
+                    if (dragging) {
+                        val dm = resources.displayMetrics
+                        val maxX = (dm.widthPixels - v.width).coerceAtLeast(0)
+                        val maxY = (dm.heightPixels - v.height).coerceAtLeast(0)
+                        // Gravity.END: moving the finger right decreases x
+                        params.x = (startX - dx).coerceIn(0, maxX)
+                        params.y = (startY + dy).coerceIn(0, maxY)
+                        try {
+                            wm.updateViewLayout(v, params)
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (dragging) savePosition(params.x, params.y) else v.performClick()
+                    dragging = false
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun savePosition(x: Int, y: Int) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putInt(KEY_X, x)
+            .putInt(KEY_Y, y)
+            .apply()
     }
 
     private fun updateOverlay(intent: Intent) {
@@ -108,6 +173,7 @@ class OverlayService : Service() {
         fpsText = null
         tempText = null
         ramText = null
+        layoutParams = null
         stopSelf()
     }
 
@@ -131,6 +197,10 @@ class OverlayService : Service() {
 
     companion object {
         const val NOTIFICATION_ID = 4101
+
+        private const val PREFS = "overlay_prefs"
+        private const val KEY_X = "pos_x"
+        private const val KEY_Y = "pos_y"
 
         const val ACTION_START = "com.zsdev.fpsmonitor.overlay.START"
         const val ACTION_UPDATE = "com.zsdev.fpsmonitor.overlay.UPDATE"
