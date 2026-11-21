@@ -14,13 +14,12 @@ def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "
 
 android {
     namespace "com.zsdev.fpsmonitor"
-    compileSdk 35
+    compileSdk 34
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-        // Required by flutter_local_notifications (uses java.time APIs on older devices)
-        coreLibraryDesugaringEnabled true
+
     }
 
     kotlinOptions {
@@ -58,6 +57,5 @@ dependencies {
     implementation "dev.rikka.shizuku:api:13.1.5"
     implementation "dev.rikka.shizuku:provider:13.1.5"
 
-    // Core-library desugaring for flutter_local_notifications
-    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
+
 }
