@@ -49,6 +49,9 @@ android {
 // so com.android.build.OutputFile from AGP 4.2.2 is visible to Flutter's plugin)
 if (flutterSdkPath != null) {
     apply from: "$flutterSdkPath/packages/flutter_tools/gradle/flutter.gradle"
+    flutter {
+        source '../..'
+    }
 }
 
 // Resolve Flutter engine version from the SDK (matches Flutter's own logic)
@@ -67,23 +70,6 @@ android.buildTypes.all { buildType ->
     ["armeabi-v7a", "arm64-v8a", "x86_64"].each { abi ->
         String arch = abi.replace("-", "_")
         dependencies.add("${buildType.name}Api", "io.flutter:${arch}_${flutterBuildMode}:$flutterEngineVersion")
-    }
-}
-
-// Strip path_provider from GeneratedPluginRegistrant.java. path_provider is
-// resolved as a transitive Flutter dependency but is not used in this app's
-// Dart code, so its plugin class isn't needed. This avoids a Java compile
-// error when Flutter's plugin system references it.
-afterEvaluate {
-    tasks.matching { it.name == 'compileReleaseJavaWithJavac' }.all { task ->
-        task.doFirst {
-            def registrant = file("src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java")
-            if (registrant.exists()) {
-                def content = registrant.text
-                content = content.replace("flutterEngine.getPlugins().add(new io.flutter.plugins.pathprovider.PathProviderPlugin());", "// path_provider registration skipped (transitive dep, not used)")
-                registrant.text = content
-            }
-        }
     }
 }
 
