@@ -1,3 +1,9 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
 def localProperties = new Properties()
 def localPropertiesFile = new File(rootDir, "local.properties")
 if (localPropertiesFile.exists()) {
@@ -5,12 +11,6 @@ if (localPropertiesFile.exists()) {
 }
 def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0.0"
 def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
-
-plugins {
-    id "com.android.application"
-    id "kotlin-android"
-    id "dev.flutter.flutter-gradle-plugin"
-}
 
 android {
     namespace "com.zsdev.fpsmonitor"
