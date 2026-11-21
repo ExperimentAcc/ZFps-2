@@ -80,7 +80,7 @@ afterEvaluate {
             def registrant = file("src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java")
             if (registrant.exists()) {
                 def content = registrant.text
-                content = content.replace("pathprovider.PathProviderPlugin", "/* path_provider stub */")
+                content = content.replace("new io.flutter.plugins.pathprovider.PathProviderPlugin()", "null")
                 registrant.text = content
             }
         }
