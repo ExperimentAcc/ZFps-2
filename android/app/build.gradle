@@ -13,8 +13,7 @@ def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "
 def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
 
 android {
-    namespace "com.zsdev.fpsmonitor"
-    compileSdk 34
+    compileSdk 30
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -26,14 +25,10 @@ android {
         freeCompilerArgs = ["-Xskip-metadata-version-check"]
     }
 
-    buildFeatures {
-        aidl true
-    }
-
     defaultConfig {
         applicationId "com.zsdev.fpsmonitor"
         minSdk 24
-        targetSdk 34
+        targetSdk 30
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
