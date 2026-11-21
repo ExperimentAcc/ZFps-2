@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
+import android.util.Log
 import android.view.WindowManager
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -36,6 +37,34 @@ class SystemMetrics(private val context: Context) {
 
     private var prevCpuTotal: Long = -1
     private var prevCpuIdle: Long = -1
+
+    @Volatile private var lastHal: Map<Int, List<Double>> = emptyMap()
+    @Volatile private var lastHalAt: Long = 0L
+    @Volatile private var loggedThermalMiss = false
+
+    private companion object {
+        const val TAG = "FpsThermal"
+        const val HAL_CACHE_MS = 5000L
+        const val HAL_CPU = 0
+        const val HAL_GPU = 1
+        const val HAL_BATTERY = 2
+        const val HAL_SKIN = 3
+
+        val GPU_SENSOR = Regex("gpu|kgsl|gpuss|g3d|mali|adreno")
+        val CPU_SENSOR = Regex("cpu|cpuss|acpu|apcpu|cluster|silver|gold|prime|kryo|tsens|soc_|big|little|mtktscpu|mtk-cpu")
+        val IGNORED_SENSOR = Regex("batt|bat_|charger|usb|pmic|pm8|pm6|wlan|modem|mdm|quiet|ambient|flash|camera|display|lcd|sdm|nand|ufs|wireless")
+
+        // One shell call: thermal zones + hwmon sensors + Adreno temp ("name=value" lines)
+        const val THERMAL_SCRIPT =
+            "for z in /sys/class/thermal/thermal_zone*; do " +
+                "t=\$(cat \$z/type 2>/dev/null); v=\$(cat \$z/temp 2>/dev/null); " +
+                "[ -n \"\$v\" ] && echo \"\$t=\$v\"; done; " +
+                "for h in /sys/class/hwmon/hwmon*; do " +
+                "n=\$(cat \$h/name 2>/dev/null); v=\$(cat \$h/temp1_input 2>/dev/null); " +
+                "[ -n \"\$v\" ] && echo \"hwmon_\$n=\$v\"; done; " +
+                "v=\$(cat /sys/class/kgsl/kgsl-3d0/temp 2>/dev/null); " +
+                "[ -n \"\$v\" ] && echo \"kgsl_gpu=\$v\"; true"
+    }
 
     // ------------------------------------------------------------------ collect
 
@@ -181,53 +210,99 @@ class SystemMetrics(private val context: Context) {
     // ------------------------------------------------------------------ temperatures
 
     /**
-     * Read all thermal zones and split them into CPU-ish and GPU-ish buckets.
+     * Reads CPU / GPU temperature from several sources, best first:
+     *  1. kernel thermal zones, hwmon sensors and kgsl temp (via Shizuku shell)
+     *  2. Android thermal HAL (`dumpsys thermalservice`) - works on most phones
+     *     where the sysfs files are hidden or use odd units
+     *  3. last resort: skin / battery temperature so the UI is never blank
      * Returns Pair(cpuCelsius, gpuCelsius); -1 when unknown.
      */
     private fun readThermalTemps(shizuku: ShizukuClient): Pair<Double, Double> {
-        val out = try {
-            shizuku.runShell(
-                "for z in /sys/class/thermal/thermal_zone*; do " +
-                    "t=\$(cat \$z/type 2>/dev/null); v=\$(cat \$z/temp 2>/dev/null); " +
-                    "echo \"\$t=\$v\"; done"
-            )
-        } catch (t: Throwable) {
-            ""
-        }
-
         val cpuTemps = mutableListOf<Double>()
         val gpuTemps = mutableListOf<Double>()
         val allTemps = mutableListOf<Double>()
 
-        out.lineSequence().forEach { line ->
+        val zonesOut = try {
+            shizuku.runShell(THERMAL_SCRIPT)
+        } catch (t: Throwable) {
+            ""
+        }
+
+        zonesOut.lineSequence().forEach { line ->
             val idx = line.indexOf('=')
             if (idx <= 0) return@forEach
             val type = line.substring(0, idx).trim().lowercase()
             val raw = line.substring(idx + 1).trim().toDoubleOrNull() ?: return@forEach
-            if (raw <= 0.0) return@forEach
-            var celsius = raw
-            // Most kernels report millidegrees (e.g. 34567 -> 34.567 C)
-            if (celsius > 1000.0) celsius /= 1000.0
-            if (celsius < 1.0 || celsius > 125.0) return@forEach
+            val celsius = normalizeCelsius(raw) ?: return@forEach
+            if (IGNORED_SENSOR.containsMatchIn(type)) return@forEach
             allTemps.add(celsius)
             when {
-                Regex(".*(gpu|kgsl|gpuss|g3d).*").matches(type) -> gpuTemps.add(celsius)
-                Regex(".*(cpu|cpuss|acpu|apcpu|cluster|silver|gold|prime|kryo|tsens|big|little|therm).*").matches(type) -> cpuTemps.add(celsius)
+                GPU_SENSOR.containsMatchIn(type) -> gpuTemps.add(celsius)
+                CPU_SENSOR.containsMatchIn(type) -> cpuTemps.add(celsius)
             }
         }
 
-        val cpu = when {
-            cpuTemps.isNotEmpty() -> cpuTemps.average()
-            allTemps.isNotEmpty() -> allTemps.average()
-            else -> -1.0
+        // Thermal HAL: only queried when sysfs did not give both values
+        val hal = if (cpuTemps.isEmpty() || gpuTemps.isEmpty()) readHalTemps(shizuku) else emptyMap()
+
+        val cpu = cpuTemps.averageOrNull()
+            ?: hal[HAL_CPU]?.averageOrNull()
+            ?: allTemps.averageOrNull()
+            ?: hal[HAL_SKIN]?.averageOrNull()
+            ?: hal[HAL_BATTERY]?.averageOrNull()
+            ?: batteryTempC()
+        val gpu = gpuTemps.averageOrNull()
+            ?: hal[HAL_GPU]?.averageOrNull()
+            ?: allTemps.averageOrNull()
+            ?: hal[HAL_SKIN]?.averageOrNull()
+            ?: hal[HAL_BATTERY]?.averageOrNull()
+            ?: batteryTempC()
+
+        if (cpu == null && gpu == null && !loggedThermalMiss) {
+            loggedThermalMiss = true
+            Log.w(TAG, "No temperature source worked. zones output: ${zonesOut.take(300)}")
         }
-        val gpu = when {
-            gpuTemps.isNotEmpty() -> gpuTemps.average()
-            allTemps.isNotEmpty() -> allTemps.average()
-            else -> -1.0
-        }
-        return cpu to gpu
+        return (cpu ?: -1.0) to (gpu ?: -1.0)
     }
+
+    /** Handles milli-degrees (45000), deci-degrees (450) and plain degrees (45). */
+    private fun normalizeCelsius(raw: Double): Double? {
+        val c = when {
+            raw > 1000.0 -> raw / 1000.0
+            raw > 150.0 -> raw / 10.0
+            else -> raw
+        }
+        return if (c in 1.0..125.0) c else null
+    }
+
+    /** `dumpsys thermalservice` -> map of HAL type id to temperatures (Celsius). */
+    private fun readHalTemps(shizuku: ShizukuClient): Map<Int, List<Double>> {
+        val now = System.currentTimeMillis()
+        if (now - lastHalAt < HAL_CACHE_MS) return lastHal
+        val result = mutableMapOf<Int, MutableList<Double>>()
+        try {
+            val out = shizuku.runShell("dumpsys thermalservice 2>/dev/null")
+            Regex("mValue=(-?[0-9.]+),\\s*mType=(\\d+)").findAll(out).forEach { m ->
+                val v = m.groupValues[1].toDoubleOrNull() ?: return@forEach
+                val type = m.groupValues[2].toIntOrNull() ?: return@forEach
+                if (v in 1.0..125.0) result.getOrPut(type) { mutableListOf() }.add(v)
+            }
+        } catch (_: Throwable) {
+        }
+        lastHal = result
+        lastHalAt = now
+        return result
+    }
+
+    private fun batteryTempC(): Double? = try {
+        val i = context.registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val t = i?.getIntExtra("temperature", Int.MIN_VALUE) ?: Int.MIN_VALUE
+        if (t != Int.MIN_VALUE && t > 0) t / 10.0 else null
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun List<Double>.averageOrNull(): Double? = if (isEmpty()) null else average()
 
     // ------------------------------------------------------------------ RAM
 
