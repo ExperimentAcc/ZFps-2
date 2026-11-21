@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../models/device_stats.dart';
+import '../models/overlay_config.dart';
 
 /// Dart-side facade for the floating overlay window.
 ///
@@ -38,9 +39,30 @@ class OverlayService {
         'cpuTemp': stats.cpuTemp,
         'gpuTemp': stats.gpuTemp,
         'freeRamMb': stats.freeRamMb,
+        'cpuUsage': stats.cpuUsage,
+        'gpuUsage': stats.gpuUsage,
       });
     } on PlatformException {
       // Overlay may be gone (user revoked permission); ignore.
+    }
+  }
+
+  /// Saved overlay look (defaults if nothing was saved yet).
+  Future<OverlayConfig> getConfig() async {
+    try {
+      final map = await _channel.invokeMethod<Map<dynamic, dynamic>>('getOverlayConfig');
+      return map == null ? const OverlayConfig() : OverlayConfig.fromMap(map);
+    } on PlatformException {
+      return const OverlayConfig();
+    }
+  }
+
+  /// Saves the look and applies it live if the overlay is currently showing.
+  Future<void> saveConfig(OverlayConfig config) async {
+    try {
+      await _channel.invokeMethod<bool>('setOverlayConfig', config.toMap());
+    } on PlatformException {
+      // ignore: the next save will retry
     }
   }
 }
