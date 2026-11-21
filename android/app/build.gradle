@@ -51,6 +51,25 @@ if (flutterSdkPath != null) {
     apply from: "$flutterSdkPath/packages/flutter_tools/gradle/flutter.gradle"
 }
 
+// Resolve Flutter engine version from the SDK (matches Flutter's own logic)
+def flutterEngineVersion = "1.0.0-unknown"
+if (flutterSdkPath != null) {
+    def engineVersionFile = new File(flutterSdkPath, "bin/internal/engine.version")
+    if (engineVersionFile.exists()) {
+        flutterEngineVersion = "1.0.0-" + engineVersionFile.text.trim()
+    }
+}
+
+// Add Flutter embedding and libflutter.so dependencies for release build
+android.buildTypes.all { buildType ->
+    String flutterBuildMode = buildType.debuggable ? "debug" : (buildType.name == "profile" ? "profile" : "release")
+    dependencies.add("${buildType.name}Api", "io.flutter:flutter_embedding_${flutterBuildMode}:$flutterEngineVersion")
+    ["armeabi-v7a", "arm64-v8a"].each { abi ->
+        String arch = abi.replace("-", "_")
+        dependencies.add("${buildType.name}Api", "io.flutter:${arch}_${flutterBuildMode}:$flutterEngineVersion")
+    }
+}
+
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.5.31"
 
