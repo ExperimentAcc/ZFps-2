@@ -64,7 +64,7 @@ if (flutterSdkPath != null) {
 android.buildTypes.all { buildType ->
     String flutterBuildMode = buildType.debuggable ? "debug" : (buildType.name == "profile" ? "profile" : "release")
     dependencies.add("${buildType.name}Api", "io.flutter:flutter_embedding_${flutterBuildMode}:$flutterEngineVersion")
-    ["armeabi-v7a", "arm64-v8a"].each { abi ->
+    ["armeabi-v7a", "arm64-v8a", "x86_64", "x86"].each { abi ->
         String arch = abi.replace("-", "_")
         dependencies.add("${buildType.name}Api", "io.flutter:${arch}_${flutterBuildMode}:$flutterEngineVersion")
     }
