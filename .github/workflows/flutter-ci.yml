@@ -42,8 +42,6 @@ jobs:
         run: |
           flutter --version
           flutter doctor
-      - name: Check pub.dev reachability
-        run: curl -sSf --max-time 10 https://pub.dev >/dev/null
       - name: Flutter pub get
         run: flutter pub get
 
