@@ -65,11 +65,11 @@ class MonitorService : Service() {
             .setPriority(Notification.PRIORITY_LOW)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (Build.VERSION.SDK_INT >= 34) {
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                512 // ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE (API 34)
             )
         } else {
             @Suppress("DEPRECATION")
