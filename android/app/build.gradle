@@ -70,6 +70,23 @@ android.buildTypes.all { buildType ->
     }
 }
 
+// Strip path_provider from GeneratedPluginRegistrant.java. path_provider is
+// resolved as a transitive Flutter dependency but is not used in this app's
+// Dart code, so its plugin class isn't needed. This avoids a Java compile
+// error when Flutter's plugin system references it.
+afterEvaluate {
+    tasks.matching { it.name == 'compileReleaseJavaWithJavac' }.all { task ->
+        task.doFirst {
+            def registrant = file("src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java")
+            if (registrant.exists()) {
+                def content = registrant.text
+                content = content.replace("pathprovider.PathProviderPlugin", "/* path_provider stub */")
+                registrant.text = content
+            }
+        }
+    }
+}
+
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.5.31"
 
@@ -78,5 +95,3 @@ dependencies {
     implementation "dev.rikka.shizuku:provider:13.1.5"
 
 }
-
-
