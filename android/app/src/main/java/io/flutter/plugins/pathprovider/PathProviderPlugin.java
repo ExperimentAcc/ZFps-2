@@ -1,7 +1,8 @@
 package io.flutter.plugins.pathprovider;
 
-import io.flutter.plugin.common.FlutterPlugin;
-import io.flutter.plugin.common.FlutterPlugin.FlutterPluginBinding;
+import io.flutter.plugin.common.PluginRegistry;
+import io.flutter.plugin.common.PluginRegistry.FlutterPlugin;
+import io.flutter.plugin.common.PluginRegistry.FlutterPlugin.FlutterPluginBinding;
 
 /**
  * Stub for io.flutter.plugins.pathprovider.PathProviderPlugin.
