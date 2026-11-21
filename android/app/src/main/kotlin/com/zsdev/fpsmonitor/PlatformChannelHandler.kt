@@ -15,6 +15,7 @@ import java.util.concurrent.Executors
  * Platform channel: com.zsdev.fpsmonitor/channel
  *
  * Methods:
+ *  - getStorageDir               -> String (app private files dir, used by Hive)
  *  - checkShizuku                -> {ping, version, permission, bound, preV11}
  *  - bindShizuku                 -> Boolean (starts async bind + permission request)
  *  - runShell (command)          -> String (stdout+stderr, or "ERR: ...")
@@ -52,6 +53,9 @@ class PlatformChannelHandler(
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            // Storage folder for Hive (replaces path_provider)
+            "getStorageDir" -> replyOnUi(result) { appContext.filesDir.absolutePath }
+
             "checkShizuku" -> replyOnUi(result) { shizuku.status() }
 
             "bindShizuku" -> replyOnUi(result) {
