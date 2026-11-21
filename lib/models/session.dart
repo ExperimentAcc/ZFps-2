@@ -78,6 +78,8 @@ class Session extends HiveObject {
 
   // ------------------------------------------------------- averages (≥ 0)
 
+  static bool _hasData(List<double> xs) => xs.any((e) => e >= 0);
+
   static double _avg(List<double> xs) {
     final valid = xs.where((e) => e >= 0).toList();
     if (valid.isEmpty) return 0;
@@ -100,8 +102,9 @@ class Session extends HiveObject {
   double get maxFps => _max(fpsSamples);
   double get minFps => _min(fpsSamples);
 
-  double get avgCpuTemp => _avg(cpuTempSamples);
-  double get avgGpuTemp => _avg(gpuTempSamples);
+  // -1 = no data (Fmt.temp shows "--" instead of a misleading 0°C)
+  double get avgCpuTemp => _hasData(cpuTempSamples) ? _avg(cpuTempSamples) : -1;
+  double get avgGpuTemp => _hasData(gpuTempSamples) ? _avg(gpuTempSamples) : -1;
   double get avgFreeRam => _avg(freeRamSamples);
 
   double get avgCpuUsage => _avg(cpuUsageSamples);
