@@ -11,7 +11,7 @@ pluginManagement {
             "Generate it with: echo \"flutter.sdk=\$FLUTTER_HOME\" > android/local.properties"
         )
     }
-    includeBuild(new File(flutterSdkPath, "packages/flutter_tools/gradle"))
+    includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
         google()
