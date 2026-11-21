@@ -1,0 +1,63 @@
+def localProperties = new Properties()
+def localPropertiesFile = new File(rootDir, "local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { stream -> localProperties.load(stream) }
+}
+def flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0.0"
+def flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
+
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+android {
+    namespace "com.zsdev.fpsmonitor"
+    compileSdk 34
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        // Required by flutter_local_notifications (uses java.time APIs on older devices)
+        coreLibraryDesugaringEnabled true
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        aidl true
+    }
+
+    defaultConfig {
+        applicationId "com.zsdev.fpsmonitor"
+        minSdk 23
+        targetSdk 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+    }
+
+    buildTypes {
+        release {
+            // CI-friendly: no signing secrets are baked into the repo, so the
+            // release build is signed with the well-known debug key. Replace
+            // with a real keystore before publishing to the Play Store.
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
+
+    // Shizuku — privileged shell access (requires Shizuku started via ADB/root on device)
+    implementation "dev.rikka.shizuku:api:13.1.5"
+    implementation "dev.rikka.shizuku:provider:13.1.5"
+
+    // Core-library desugaring for flutter_local_notifications
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.4"
+}

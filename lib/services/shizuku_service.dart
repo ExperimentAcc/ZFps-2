@@ -1,0 +1,144 @@
+import 'package:flutter/services.dart';
+
+import '../models/device_stats.dart';
+import '../models/installed_app.dart';
+
+/// Result of `checkShizuku` on the native side.
+class ShizukuStatus {
+  /// Shizuku manager process is alive.
+  final bool running;
+
+  /// Shizuku API version, or -1 when unknown.
+  final int version;
+
+  /// True when this app holds the Shizuku permission.
+  final bool permissionGranted;
+
+  /// True when the privileged user service is connected and bound.
+  final bool bound;
+
+  /// Shizuku server is older than v11.
+  final bool preV11;
+
+  const ShizukuStatus({
+    required this.running,
+    required this.version,
+    required this.permissionGranted,
+    required this.bound,
+    required this.preV11,
+  });
+
+  const ShizukuStatus.offline()
+      : running = false,
+        version = -1,
+        permissionGranted = false,
+        bound = false,
+        preV11 = false;
+
+  factory ShizukuStatus.fromMap(Map<dynamic, dynamic> map) {
+    return ShizukuStatus(
+      running: map['ping'] == true,
+      version: (map['version'] as num?)?.toInt() ?? -1,
+      permissionGranted: (map['permission'] as num?)?.toInt() == 0,
+      bound: map['bound'] == true,
+      preV11: map['preV11'] == true,
+    );
+  }
+
+  /// Ready to collect privileged stats.
+  bool get isOperational => running && permissionGranted && bound;
+}
+
+/// Low-level access to the native channel: Shizuku state, shell commands
+/// and per-poll metric collection.
+class ShizukuService {
+  ShizukuService._();
+  static final ShizukuService instance = ShizukuService._();
+
+  static const MethodChannel _channel = MethodChannel('com.zsdev.fpsmonitor/channel');
+
+  Future<ShizukuStatus> checkShizuku() async {
+    try {
+      final res = await _channel.invokeMapMethod<String, dynamic>('checkShizuku');
+      if (res == null) return const ShizukuStatus.offline();
+      return ShizukuStatus.fromMap(res);
+    } on PlatformException {
+      return const ShizukuStatus.offline();
+    } on MissingPluginException {
+      return const ShizukuStatus.offline();
+    }
+  }
+
+  /// Requests the Shizuku permission (if needed) and binds the user service.
+  /// Binding completes asynchronously; poll [checkShizuku] until `bound`.
+  Future<bool> bindShizuku() async {
+    try {
+      return await _channel.invokeMethod<bool>('bindShizuku') ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Run a shell command through the privileged service.
+  /// Output lines starting with "ERR:" indicate failure.
+  Future<String> runShell(String command) async {
+    try {
+      return await _channel.invokeMethod<String>('runShell', {'command': command}) ??
+          'ERR: empty result';
+    } on PlatformException catch (e) {
+      return 'ERR: ${e.message}';
+    }
+  }
+
+  /// Collect one full stats sample. Pass [includeStorage] every ~10 s to
+  /// avoid hammering storage with benchmarks.
+  Future<DeviceStats> collectStats(String packageName, {bool includeStorage = false}) async {
+    final res = await _channel.invokeMapMethod<String, dynamic>('getStats', {
+      'packageName': packageName,
+      'includeStorage': includeStorage,
+    });
+    return DeviceStats.fromMap(res ?? const <String, dynamic>{});
+  }
+
+  /// Battery level 0-100, or -1 when unknown.
+  Future<int> getBatteryLevel() async {
+    try {
+      return await _channel.invokeMethod<int>('getBatteryLevel') ?? -1;
+    } on PlatformException {
+      return -1;
+    }
+  }
+
+  /// Launchable installed apps with icons, sorted by name.
+  Future<List<InstalledApp>> getInstalledApps() async {
+    try {
+      final res = await _channel.invokeListMethod<dynamic>('getInstalledApps');
+      if (res == null) return [];
+      return res
+          .whereType<Map<dynamic, dynamic>>()
+          .map(InstalledApp.fromMap)
+          .toList();
+    } on PlatformException {
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------- overlay gate
+
+  Future<bool> checkOverlayPermission() async {
+    try {
+      return await _channel.invokeMethod<bool>('checkOverlayPermission') ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Opens Android's "Display over other apps" system settings page.
+  Future<bool> requestOverlayPermission() async {
+    try {
+      return await _channel.invokeMethod<bool>('requestOverlayPermission') ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+}
