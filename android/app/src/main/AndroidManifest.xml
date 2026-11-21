@@ -64,8 +64,7 @@
         <!-- Foreground service that keeps the monitoring session alive -->
         <service
             android:name=".MonitorService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Game FPS monitoring session" />
