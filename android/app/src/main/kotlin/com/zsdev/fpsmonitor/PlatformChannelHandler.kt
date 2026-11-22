@@ -1,5 +1,6 @@
 package com.zsdev.fpsmonitor
 
+import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -9,6 +10,7 @@ import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.util.concurrent.Executors
 
 /**
@@ -23,6 +25,8 @@ import java.util.concurrent.Executors
  *            includeStorage)        gpuUsage, storageSpeed, refreshRate}
  *  - getFrames (packageName,     -> {frames: List<Double> ms, valid: Boolean} new frame times
  *            reset)                  since the previous call (see FrameSampler)
+ *  - shareFile (bytes, fileName, -> Boolean (opens the Android share sheet for a CSV / PNG)
+ *            mimeType, title)
  *  - getBatteryLevel             -> Int (0-100, or -1 when unknown)
  *  - checkOverlayPermission      -> Boolean (canDrawOverlays)
  *  - requestOverlayPermission    -> Boolean (opens system settings)
@@ -106,6 +110,33 @@ class PlatformChannelHandler(
                     }
                     replyOnUi(result) {
                         mapOf("frames" to batch.frameTimesMs, "valid" to batch.valid)
+                    }
+                }
+            }
+
+            "shareFile" -> {
+                val bytes = call.argument<ByteArray>("bytes")
+                val fileName = call.argument<String>("fileName") ?: "export"
+                val mime = call.argument<String>("mimeType") ?: "application/octet-stream"
+                val title = call.argument<String>("title") ?: "Share"
+                if (bytes == null) {
+                    result.error("bad_args", "bytes missing", null)
+                } else {
+                    executor.execute {
+                        val uri = try {
+                            writeExport(bytes, fileName)
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "writeExport failed: ${t.message}")
+                            null
+                        }
+                        replyOnUi(result) {
+                            if (uri == null) {
+                                false
+                            } else {
+                                launchShare(uri, mime, title)
+                                true
+                            }
+                        }
                     }
                 }
             }
@@ -213,6 +244,33 @@ class PlatformChannelHandler(
                 result.error("channel_error", t.message, null)
             }
         }
+    }
+
+    /** Writes [bytes] to cache/exports and returns the content:// uri served by [ExportProvider]. */
+    private fun writeExport(bytes: ByteArray, fileName: String): Uri {
+        val dir = File(appContext.cacheDir, "exports").apply { mkdirs() }
+        // Housekeeping: drop exports older than 24 h
+        val cutoff = System.currentTimeMillis() - 24L * 60 * 60 * 1000
+        dir.listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
+
+        val safe = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(100).ifBlank { "export" }
+        File(dir, safe).writeBytes(bytes)
+        return Uri.Builder()
+            .scheme("content")
+            .authority("${appContext.packageName}.exports")
+            .appendPath(safe)
+            .build()
+    }
+
+    private fun launchShare(uri: Uri, mime: String, title: String) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            clipData = ClipData.newRawUri(title, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        activity.startActivity(Intent.createChooser(send, title))
     }
 
     private fun overlayPermitted(): Boolean =
