@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../database/app_database.dart';
 import '../models/device_stats.dart';
 import '../models/session.dart';
+import '../utils/frame_stats.dart';
 import 'notification_service.dart';
 import 'overlay_service.dart';
 import 'shizuku_service.dart';
@@ -18,10 +19,20 @@ class MonitorService extends ChangeNotifier {
 
   static const Duration pollInterval = Duration(seconds: 2);
 
+  /// Frame timestamps are read more often than the other stats so no frames
+  /// are missed on high refresh-rate screens (SurfaceFlinger keeps ~127 frames).
+  static const Duration framePollInterval = Duration(milliseconds: 500);
+
   static const MethodChannel _channel =
       MethodChannel('com.zsdev.fpsmonitor/channel');
 
   Timer? _pollTimer;
+  Timer? _frameTimer;
+  bool _frameBusy = false;
+  bool _frameReset = true;
+
+  /// True once real per-frame data has been read in this session.
+  bool _realFrames = false;
 
   bool _isMonitoring = false;
   String? _appName;
@@ -35,6 +46,14 @@ class MonitorService extends ChangeNotifier {
   int _batteryEnd = -1;
 
   final List<double> _fpsSamples = [];
+  final List<double> _lowSamples = [];
+
+  /// Refresh-rate based FPS, only kept as a fallback if real frame data never arrives.
+  final List<double> _fallbackFpsSamples = [];
+
+  /// Frame times collected since the last 2 s poll.
+  final List<double> _windowFrames = [];
+  List<int> _frameHist = FrameStats.emptyHistogram();
   final List<double> _cpuTempSamples = [];
   final List<double> _gpuTempSamples = [];
   final List<double> _freeRamSamples = [];
@@ -77,8 +96,12 @@ class MonitorService extends ChangeNotifier {
     _isMonitoring = true;
     notifyListeners();
 
-    // First poll immediately (also warms up the storage benchmark), then every 2 s
+    // First frame read + stats poll immediately (also warms up the storage
+    // benchmark), then frames every 0.5 s and the other stats every 2 s
+    await _pollFrames();
     await _poll();
+    _frameTimer?.cancel();
+    _frameTimer = Timer.periodic(framePollInterval, (_) => _pollFrames());
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(pollInterval, (_) => _poll());
     return true;
@@ -89,8 +112,11 @@ class MonitorService extends ChangeNotifier {
 
     _pollTimer?.cancel();
     _pollTimer = null;
+    _frameTimer?.cancel();
+    _frameTimer = null;
 
     // One final sample + battery reading
+    await _pollFrames();
     await _poll();
     _batteryEnd = await ShizukuService.instance.getBatteryLevel();
 
@@ -106,7 +132,7 @@ class MonitorService extends ChangeNotifier {
       packageName: _packageName ?? '',
       startTime: _startTime ?? DateTime.now(),
       endTime: DateTime.now(),
-      fpsSamples: List<double>.of(_fpsSamples),
+      fpsSamples: List<double>.of(_realFrames ? _fpsSamples : _fallbackFpsSamples),
       cpuTempSamples: List<double>.of(_cpuTempSamples),
       gpuTempSamples: List<double>.of(_gpuTempSamples),
       freeRamSamples: List<double>.of(_freeRamSamples),
@@ -114,6 +140,9 @@ class MonitorService extends ChangeNotifier {
       gpuUsageSamples: List<double>.of(_gpuUsageSamples),
       storageSpeedSamples: List<double>.of(_storageSpeedSamples),
       batteryDropPercent: batteryDrop,
+      lowFpsSamples: _realFrames ? List<double>.of(_lowSamples) : null,
+      frameTimeHist: _realFrames ? List<int>.of(_frameHist) : null,
+      realFrameData: _realFrames,
     );
 
     try {
@@ -151,21 +180,62 @@ class MonitorService extends ChangeNotifier {
           ? stats.copyWith(storageSpeed: _lastStorageSpeed)
           : stats;
 
-      _current = merged;
-      _record(merged);
-      await OverlayService.instance.updateOverlay(merged);
+      // Frames collected since the previous poll -> real FPS + 1% low for this window
+      final window = List<double>.of(_windowFrames);
+      _windowFrames.clear();
+
+      var stats0 = merged;
+      double? low;
+      if (_realFrames) {
+        // Real frame data wins. No frames in a window means nothing was drawn (0 FPS).
+        stats0 = merged.copyWith(fps: FrameStats.fpsOf(window) ?? 0.0);
+        low = FrameStats.lowFpsOfList(window, 0.01);
+      }
+
+      _current = stats0;
+      _record(stats0, real: _realFrames, low: low);
+      await OverlayService.instance.updateOverlay(stats0);
     } catch (e) {
       debugPrint('Poll failed: $e');
     }
     notifyListeners();
   }
 
-  void _record(DeviceStats s) {
+  Future<void> _pollFrames() async {
+    final pkg = _packageName;
+    if (pkg == null || _frameBusy) return;
+    _frameBusy = true;
+    try {
+      final reset = _frameReset;
+      _frameReset = false;
+      final batch = await ShizukuService.instance.pollFrames(pkg, reset: reset);
+      if (batch.valid) {
+        _realFrames = true;
+        if (batch.frameTimesMs.isNotEmpty) {
+          _windowFrames.addAll(batch.frameTimesMs);
+          FrameStats.addAll(_frameHist, batch.frameTimesMs);
+        }
+      }
+    } catch (e) {
+      debugPrint('Frame poll failed: $e');
+    } finally {
+      _frameBusy = false;
+    }
+  }
+
+  void _record(DeviceStats s, {required bool real, double? low}) {
     void add(List<double> target, double v) {
       if (v >= 0) target.add(v);
     }
 
-    add(_fpsSamples, s.fps);
+    if (s.fps >= 0) {
+      if (real) {
+        _fpsSamples.add(s.fps);
+        _lowSamples.add(low ?? -1); // keeps both lists aligned
+      } else {
+        _fallbackFpsSamples.add(s.fps);
+      }
+    }
     add(_cpuTempSamples, s.cpuTemp);
     add(_gpuTempSamples, s.gpuTemp);
     add(_freeRamSamples, s.freeRamMb);
@@ -176,6 +246,13 @@ class MonitorService extends ChangeNotifier {
 
   void _resetSamples() {
     _fpsSamples.clear();
+    _lowSamples.clear();
+    _fallbackFpsSamples.clear();
+    _windowFrames.clear();
+    _frameHist = FrameStats.emptyHistogram();
+    _frameReset = true;
+    _frameBusy = false;
+    _realFrames = false;
     _cpuTempSamples.clear();
     _gpuTempSamples.clear();
     _freeRamSamples.clear();
