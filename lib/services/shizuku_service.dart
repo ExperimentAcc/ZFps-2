@@ -49,6 +49,20 @@ class ShizukuStatus {
   bool get isOperational => running && permissionGranted && bound;
 }
 
+/// New frame times (ms) read from SurfaceFlinger since the previous poll.
+class FrameBatch {
+  final List<double> frameTimesMs;
+
+  /// False when frame data is unavailable (game not running, no Shizuku, ...).
+  final bool valid;
+
+  const FrameBatch({required this.frameTimesMs, required this.valid});
+
+  const FrameBatch.invalid()
+      : frameTimesMs = const <double>[],
+        valid = false;
+}
+
 /// Low-level access to the native channel: Shizuku state, shell commands
 /// and per-poll metric collection.
 class ShizukuService {
@@ -98,6 +112,27 @@ class ShizukuService {
       'includeStorage': includeStorage,
     });
     return DeviceStats.fromMap(res ?? const <String, dynamic>{});
+  }
+
+  /// Frames presented by [packageName] since the previous call.
+  /// Pass [reset] on the first call of a session.
+  Future<FrameBatch> pollFrames(String packageName, {bool reset = false}) async {
+    try {
+      final res = await _channel.invokeMapMethod<String, dynamic>('getFrames', {
+        'packageName': packageName,
+        'reset': reset,
+      });
+      if (res == null) return const FrameBatch.invalid();
+      final raw = res['frames'];
+      final frames = raw is List
+          ? raw.whereType<num>().map((e) => e.toDouble()).toList()
+          : <double>[];
+      return FrameBatch(frameTimesMs: frames, valid: res['valid'] == true);
+    } on PlatformException {
+      return const FrameBatch.invalid();
+    } on MissingPluginException {
+      return const FrameBatch.invalid();
+    }
   }
 
   /// Battery level 0-100, or -1 when unknown.
