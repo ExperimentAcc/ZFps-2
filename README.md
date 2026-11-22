@@ -36,6 +36,7 @@
 | 🌡️ **Temperatures** | CPU and GPU temperature from kernel thermal zones, with the Android thermal service as a fallback. |
 | 📊 **System stats** | CPU usage, GPU usage (Qualcomm, MediaTek, Mali and more), free RAM and storage speed. |
 | 🧾 **Session reports** | Every session is saved: avg/min/max FPS, **1% / 0.1% lows**, avg frame time, avg temperatures, CPU/GPU usage, free RAM, battery drop and duration. |
+| 📤 **Export & share** | Export one session's samples or **all sessions as CSV**, or share a **report image** (stats + graph) straight from the app. |
 | 📈 **FPS graph** | Interactive FPS-over-time graph in every report, with a 1% low line, average line and tap-to-inspect. |
 | 🔔 **Foreground service** | Monitoring keeps running while the game is in the foreground. |
 | 🌙 **Dark Material 3 UI** | Clean dark theme, portrait only, lightweight local storage (Hive), no accounts, no ads, no tracking. |
@@ -164,6 +165,7 @@ ZFps/
 │   │   ├── PlatformChannelHandler.kt   # Dart ⇄ native bridge
 │   │   ├── SystemMetrics.kt            # Temps, RAM, CPU/GPU usage
 │   │   ├── FrameSampler.kt             # Per-frame timestamps → frame times
+│   │   ├── ExportProvider.kt           # Serves exported CSV/PNG files to the share sheet
 │   │   ├── ShizukuClient.kt / UserService.kt
 │   │   ├── MonitorService.kt           # Foreground service
 │   │   └── OverlayService.kt / OverlayConfig.kt
@@ -208,7 +210,7 @@ The app shows an error page with details if startup fails. Include that text, or
 ## 🗺️ Ideas / roadmap
 
 - [x] FPS graph and frame-time (1% low) stats in reports
-- [ ] Export sessions to CSV / share a report image
+- [x] Export sessions to CSV / share a report image
 - [ ] Per-game overlay presets
 - [ ] More GPU and thermal sensor mappings (community contributions welcome)
 - [ ] Localization
