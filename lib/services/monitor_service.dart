@@ -34,6 +34,9 @@ class MonitorService extends ChangeNotifier {
   /// True once real per-frame data has been read in this session.
   bool _realFrames = false;
 
+  /// Poll index (0-based) at which the first real FPS sample was recorded.
+  int? _fpsStartPoll;
+
   bool _isMonitoring = false;
   String? _appName;
   String? _packageName;
@@ -126,13 +129,30 @@ class MonitorService extends ChangeNotifier {
         ? (_batteryStart - _batteryEnd).toDouble()
         : 0.0;
 
+    // Drop idle (0 FPS) samples at the very start / end: that is the game still
+    // loading or the user leaving the game to tap Stop, not real performance.
+    var trimStart = 0;
+    var trimEnd = _fpsSamples.length;
+    if (_realFrames) {
+      while (trimStart < trimEnd && _fpsSamples[trimStart] <= 0) {
+        trimStart++;
+      }
+      while (trimEnd > trimStart && _fpsSamples[trimEnd - 1] <= 0) {
+        trimEnd--;
+      }
+    }
+    final fpsOut = _realFrames
+        ? _fpsSamples.sublist(trimStart, trimEnd)
+        : List<double>.of(_fallbackFpsSamples);
+    final lowOut = _realFrames ? _lowSamples.sublist(trimStart, trimEnd) : null;
+
     final session = Session(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       appName: _appName ?? 'Unknown',
       packageName: _packageName ?? '',
       startTime: _startTime ?? DateTime.now(),
       endTime: DateTime.now(),
-      fpsSamples: List<double>.of(_realFrames ? _fpsSamples : _fallbackFpsSamples),
+      fpsSamples: fpsOut,
       cpuTempSamples: List<double>.of(_cpuTempSamples),
       gpuTempSamples: List<double>.of(_gpuTempSamples),
       freeRamSamples: List<double>.of(_freeRamSamples),
@@ -140,9 +160,10 @@ class MonitorService extends ChangeNotifier {
       gpuUsageSamples: List<double>.of(_gpuUsageSamples),
       storageSpeedSamples: List<double>.of(_storageSpeedSamples),
       batteryDropPercent: batteryDrop,
-      lowFpsSamples: _realFrames ? List<double>.of(_lowSamples) : null,
+      lowFpsSamples: lowOut,
       frameTimeHist: _realFrames ? List<int>.of(_frameHist) : null,
       realFrameData: _realFrames,
+      fpsStartPoll: _realFrames ? (_fpsStartPoll ?? 0) + trimStart : 0,
     );
 
     try {
@@ -230,6 +251,7 @@ class MonitorService extends ChangeNotifier {
 
     if (s.fps >= 0) {
       if (real) {
+        _fpsStartPoll ??= _pollCount - 1;
         _fpsSamples.add(s.fps);
         _lowSamples.add(low ?? -1); // keeps both lists aligned
       } else {
@@ -253,6 +275,7 @@ class MonitorService extends ChangeNotifier {
     _frameReset = true;
     _frameBusy = false;
     _realFrames = false;
+    _fpsStartPoll = null;
     _cpuTempSamples.clear();
     _gpuTempSamples.clear();
     _freeRamSamples.clear();
