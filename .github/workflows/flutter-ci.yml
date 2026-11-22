@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version'
+        description: 'Release version (e.g., v1.0.0)'
         required: true
         type: string
 
@@ -27,6 +27,11 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;30.0.2 platform-tools'
 
       - name: Set up Flutter ${{ env.FLUTTER_VERSION }}
         uses: subosito/flutter-action@v2
@@ -57,33 +62,20 @@ jobs:
           echo "android/local.properties is generated in CI and must never be committed"
           echo "flutter.dir=$(dirname $(dirname $(which flutter)))" > android/local.properties
           echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" >> android/local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
           cat android/local.properties
-
-      - name: Install Android SDK (platforms + build tools)
-        run: |
-          mkdir -p "$HOME/android-sdk/cmdline-tools"
-          wget -q https://google.com -O /tmp/cmdline-tools.zip
-          unzip -q /tmp/cmdline-tools.zip -d "$HOME/android-sdk/cmdline-tools"
-          mv "$HOME/android-sdk/cmdline-tools/cmdline-tools" "$HOME/android-sdk/cmdline-tools/latest"
-          echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> "$GITHUB_ENV"
-          yes | "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$HOME/android-sdk" \
-            "platforms;android-34" "build-tools;30.0.2" "platform-tools" >/dev/null
 
       - name: Build release APK
         run: |
-          # Strip any leading 'v' for Flutter's --build-name flag (e.g., v1.0.0 -> 1.0.0)
           CLEAN_VERSION="${{ github.event.inputs.version }}"
           CLEAN_VERSION="${CLEAN_VERSION#v}"
-          
-          # Use the GitHub run number as the Android versionCode (build-number)
           flutter build apk --release --build-name="$CLEAN_VERSION" --build-number="${{ github.run_number }}"
 
       - name: Rename APK with version
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
-             build/app/outputs/flutter-apk/fpsmonitor-${{ github.event.inputs.version }}.apk
-
+             build/app/outputs/flutter-apk/fps-monitor-${{ github.event.inputs.version }}.apk
+             
       - name: Create Git Tag and GitHub Release
         uses: softprops/action-gh-release@v2
         with:
