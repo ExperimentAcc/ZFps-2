@@ -34,13 +34,14 @@ class SessionAdapter extends TypeAdapter<Session> {
       lowFpsSamples: fields[13] == null ? null : _doubleList(fields[13]),
       frameTimeHist: fields[14] == null ? null : _intList(fields[14]),
       realFrameData: fields[15] as bool?,
+      fpsStartPoll: (fields[16] as num?)?.toInt(),
     );
   }
 
   @override
   void write(BinaryWriter writer, Session obj) {
     writer
-      ..writeByte(16)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -72,7 +73,9 @@ class SessionAdapter extends TypeAdapter<Session> {
       ..writeByte(14)
       ..write(obj.frameTimeHist)
       ..writeByte(15)
-      ..write(obj.realFrameData);
+      ..write(obj.realFrameData)
+      ..writeByte(16)
+      ..write(obj.fpsStartPoll);
   }
 
   static List<double> _doubleList(dynamic v) {
