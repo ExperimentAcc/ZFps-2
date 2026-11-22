@@ -30,11 +30,15 @@ class FpsGraph extends StatefulWidget {
   /// Time between two samples.
   final Duration step;
 
+  /// Tap / drag to inspect points. Turn off for static images.
+  final bool interactive;
+
   const FpsGraph({
     super.key,
     required this.fps,
     required this.lows,
     this.step = const Duration(seconds: 2),
+    this.interactive = true,
   });
 
   @override
@@ -86,13 +90,8 @@ class _FpsGraphState extends State<FpsGraph> {
         SizedBox(
           height: 170,
           child: LayoutBuilder(
-            builder: (context, c) => GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: (d) => _select(d.localPosition.dx, c.maxWidth),
-              onHorizontalDragStart: (d) => _select(d.localPosition.dx, c.maxWidth),
-              onHorizontalDragUpdate: (d) => _select(d.localPosition.dx, c.maxWidth),
-              onDoubleTap: () => setState(() => _selected = null),
-              child: CustomPaint(
+            builder: (context, c) {
+              final graph = CustomPaint(
                 size: Size(c.maxWidth, 170),
                 painter: _GraphPainter(
                   fps: widget.fps,
@@ -102,8 +101,17 @@ class _FpsGraphState extends State<FpsGraph> {
                   selected: sel,
                   totalTime: widget.step * (n - 1),
                 ),
-              ),
-            ),
+              );
+              if (!widget.interactive) return graph;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (d) => _select(d.localPosition.dx, c.maxWidth),
+                onHorizontalDragStart: (d) => _select(d.localPosition.dx, c.maxWidth),
+                onHorizontalDragUpdate: (d) => _select(d.localPosition.dx, c.maxWidth),
+                onDoubleTap: () => setState(() => _selected = null),
+                child: graph,
+              );
+            },
           ),
         ),
       ],
@@ -129,8 +137,10 @@ class _FpsGraphState extends State<FpsGraph> {
         if (_hasLows) ...[const SizedBox(width: 12), dot(_violet, '1% low')],
         const SizedBox(width: 12),
         dot(Colors.white54, 'avg ${_avg.toStringAsFixed(0)}'),
-        const Spacer(),
-        const Text('tap to inspect', style: TextStyle(color: Color(0xFF4B5568), fontSize: 10)),
+        if (widget.interactive) ...const [
+          Spacer(),
+          Text('tap to inspect', style: TextStyle(color: Color(0xFF4B5568), fontSize: 10)),
+        ],
       ],
     );
   }
