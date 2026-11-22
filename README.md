@@ -35,13 +35,16 @@
 | 🎨 **Fully customizable** | Choose what to show, background transparency and text size, with a live preview and presets. |
 | 🌡️ **Temperatures** | CPU and GPU temperature from kernel thermal zones, with the Android thermal service as a fallback. |
 | 📊 **System stats** | CPU usage, GPU usage (Qualcomm, MediaTek, Mali and more), free RAM and storage speed. |
-| 🧾 **Session reports** | Every session is saved: avg/max FPS, avg temperatures, CPU/GPU usage, free RAM, battery drop and duration. |
+| 🧾 **Session reports** | Every session is saved: avg/min/max FPS, **1% / 0.1% lows**, avg frame time, avg temperatures, CPU/GPU usage, free RAM, battery drop and duration. |
+| 📈 **FPS graph** | Interactive FPS-over-time graph in every report, with a 1% low line, average line and tap-to-inspect. |
 | 🔔 **Foreground service** | Monitoring keeps running while the game is in the foreground. |
 | 🌙 **Dark Material 3 UI** | Clean dark theme, portrait only, lightweight local storage (Hive), no accounts, no ads, no tracking. |
 
 **FPS colors:** green at 55 and above (60 / 90 / 120 fps), yellow from 30 to 54, red below 30.
 
 ## 📸 Screenshots
+
+> Add your screenshots to [`docs/screenshots/`](docs/screenshots) using the file names below.
 
 | Home | Customize | Overlay | Reports |
 |:---:|:---:|:---:|:---:|
@@ -100,7 +103,7 @@ Open **Customize overlay** from the home screen (tune icon in the top bar, or th
 
 | Metric | Source |
 |---|---|
-| **FPS** | `dumpsys SurfaceFlinger --latency` frame timestamps for the game's layer, clamped to the display refresh rate. Falls back to the refresh rate if the layer can't be found. |
+| **FPS & frame time** | Real per-frame present timestamps from `dumpsys SurfaceFlinger --latency` for the game's layer, read every 0.5 s. 1% / 0.1% lows come from the slowest frames of the whole session. Falls back to the refresh rate (and no lows) if the layer can't be found. |
 | **Temperature** | `/sys/class/thermal`, hwmon and Adreno sensors, then `dumpsys thermalservice`, then skin/battery as a last resort. |
 | **CPU usage** | Delta between two `/proc/stat` samples. |
 | **GPU usage** | Qualcomm `kgsl`, MediaTek `ged`, Mali and generic devfreq nodes; estimated from GPU clock if no load counter exists. |
@@ -159,7 +162,8 @@ ZFps/
 ├── android/app/src/main/
 │   ├── kotlin/com/zsdev/fpsmonitor/
 │   │   ├── PlatformChannelHandler.kt   # Dart ⇄ native bridge
-│   │   ├── SystemMetrics.kt            # FPS, temps, RAM, usage
+│   │   ├── SystemMetrics.kt            # Temps, RAM, CPU/GPU usage
+│   │   ├── FrameSampler.kt             # Per-frame timestamps → frame times
 │   │   ├── ShizukuClient.kt / UserService.kt
 │   │   ├── MonitorService.kt           # Foreground service
 │   │   └── OverlayService.kt / OverlayConfig.kt
@@ -203,7 +207,7 @@ The app shows an error page with details if startup fails. Include that text, or
 
 ## 🗺️ Ideas / roadmap
 
-- [ ] FPS graph and frame-time (1% low) stats in reports
+- [x] FPS graph and frame-time (1% low) stats in reports
 - [ ] Export sessions to CSV / share a report image
 - [ ] Per-game overlay presets
 - [ ] More GPU and thermal sensor mappings (community contributions welcome)
