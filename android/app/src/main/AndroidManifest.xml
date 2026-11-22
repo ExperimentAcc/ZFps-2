@@ -61,6 +61,13 @@
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
+        <!-- Serves exported CSV / PNG files to the share sheet (read-only, cache/exports only) -->
+        <provider
+            android:name=".ExportProvider"
+            android:authorities="${applicationId}.exports"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Foreground service that keeps the monitoring session alive -->
         <service
             android:name=".MonitorService"
