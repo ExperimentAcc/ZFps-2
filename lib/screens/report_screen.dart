@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../database/app_database.dart';
 import '../models/session.dart';
 import '../utils/format_utils.dart';
+import '../widgets/fps_graph.dart';
 import '../widgets/stat_card.dart';
 
 /// History of saved sessions with expandable per-session stats.
@@ -264,7 +265,55 @@ class _SessionCard extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _MiniStat(
+                    label: 'Min FPS',
+                    value: session.minFps > 0 ? session.minFps.toStringAsFixed(0) : '--',
+                    accent: const Color(0xFFF87171),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _MiniStat(
+                    label: '1% Low',
+                    value: _fpsOrDash(session.onePercentLow),
+                    accent: _zone(session.onePercentLow),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _MiniStat(
+                    label: '0.1% Low',
+                    value: _fpsOrDash(session.pointOnePercentLow),
+                    accent: _zone(session.pointOnePercentLow),
+                  ),
+                ),
+              ],
+            ),
+            if (session.fpsSamples.length >= 2) ...[
+              const SizedBox(height: 12),
+              _GraphCard(session: session),
+            ],
+            if (session.realFrameData == false)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'Frame data was not available on this device, so FPS is estimated '
+                  'from the screen refresh rate and 1% low can\'t be calculated.',
+                  style: TextStyle(fontSize: 10.5, color: Color(0xFF8B94A7), height: 1.35),
+                ),
+              ),
             const SizedBox(height: 10),
+            if (session.avgFrameTimeMs != null)
+              _StatLine(
+                icon: Icons.timer_outlined,
+                label: 'Avg frame time',
+                value: '${session.avgFrameTimeMs!.toStringAsFixed(1)} ms',
+                accent: const Color(0xFF60A5FA),
+              ),
             _StatLine(
               icon: Icons.battery_6_bar_outlined,
               label: 'Battery drop',
@@ -398,6 +447,47 @@ class _StatLine extends StatelessWidget {
               color: Color(0xFFE5E7EB),
               fontWeight: FontWeight.w700,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _fpsOrDash(double? v) => v == null ? '--' : v.toStringAsFixed(0);
+
+Color _zone(double? v) => v == null ? const Color(0xFF8B94A7) : fpsZoneColor(v);
+
+/// "FPS over time" card with the interactive graph.
+class _GraphCard extends StatelessWidget {
+  final Session session;
+
+  const _GraphCard({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2130),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF232C3D)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'FPS over time',
+            style: TextStyle(
+              color: Color(0xFFE5E7EB),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          FpsGraph(
+            fps: session.fpsSamples,
+            lows: session.lows,
           ),
         ],
       ),
