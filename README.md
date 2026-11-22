@@ -43,11 +43,9 @@
 
 ## 📸 Screenshots
 
-> Add your screenshots to [`docs/screenshots/`](docs/screenshots) using the file names below.
-
 | Home | Customize | Overlay | Reports |
 |:---:|:---:|:---:|:---:|
-| <img src="docs/screenshots/home.png" width="190"/> | <img src="docs/screenshots/customize.png" width="190"/> | <img src="docs/screenshots/overlay.png" width="190"/> | <img src="docs/screenshots/reports.png" width="190"/> |
+| <img src="docs/screenshots/home.jpg" width="190"/> | <img src="docs/screenshots/customize.jpg" width="190"/> | <img src="docs/screenshots/overlay.jpg" width="190"/> | <img src="docs/screenshots/reports.jpg" width="190"/> |
 
 ## 🚀 Getting started
 
