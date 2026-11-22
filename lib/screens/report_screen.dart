@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import '../database/app_database.dart';
 import '../models/session.dart';
 import '../utils/format_utils.dart';
+import '../services/export_service.dart';
+import '../utils/csv_export.dart';
 import '../widgets/fps_graph.dart';
+import '../widgets/report_share.dart';
 import '../widgets/stat_card.dart';
 
 /// History of saved sessions with expandable per-session stats.
@@ -37,6 +40,26 @@ class _ReportScreenState extends State<ReportScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Deleted session for ${session.appName}'),
+        backgroundColor: const Color(0xFF1F2733),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _exportAll() async {
+    final ok = await ExportService.instance.shareBytes(
+      CsvExport.allSessions(_sessions),
+      fileName: CsvExport.allSessionsFileName(),
+      mimeType: 'text/csv',
+      title: 'FPS Monitor - all sessions',
+    );
+    if (!ok && mounted) _toast('Could not open the share sheet');
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
         backgroundColor: const Color(0xFF1F2733),
         behavior: SnackBarBehavior.floating,
       ),
@@ -82,6 +105,12 @@ class _ReportScreenState extends State<ReportScreen> {
         elevation: 0,
         title: const Text('Performance reports', style: TextStyle(fontWeight: FontWeight.w700)),
         actions: [
+          if (_sessions.isNotEmpty)
+            IconButton(
+              tooltip: 'Export all sessions (CSV)',
+              icon: const Icon(Icons.file_download_outlined),
+              onPressed: _exportAll,
+            ),
           if (_sessions.isNotEmpty)
             IconButton(
               tooltip: 'Clear all',
@@ -227,6 +256,29 @@ class _SessionCard extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Share / export',
+                icon: const Icon(Icons.ios_share_rounded,
+                    color: Color(0xFF6B7484), size: 21),
+                color: const Color(0xFF1F2733),
+                onSelected: (value) {
+                  if (value == 'image') {
+                    showShareReportDialog(context, session);
+                  } else {
+                    _exportSessionCsv(context, session);
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'image',
+                    child: _MenuRow(Icons.image_outlined, 'Share report image'),
+                  ),
+                  PopupMenuItem(
+                    value: 'csv',
+                    child: _MenuRow(Icons.table_chart_outlined, 'Export samples (CSV)'),
+                  ),
+                ],
               ),
               IconButton(
                 tooltip: 'Delete session',
@@ -491,6 +543,41 @@ class _GraphCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+Future<void> _exportSessionCsv(BuildContext context, Session session) async {
+  final ok = await ExportService.instance.shareBytes(
+    CsvExport.sessionSamples(session),
+    fileName: '${CsvExport.baseName(session)}.csv',
+    mimeType: 'text/csv',
+    title: 'FPS samples - ${session.appName}',
+  );
+  if (!ok && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Could not open the share sheet'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+}
+
+class _MenuRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _MenuRow(this.icon, this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 19, color: const Color(0xFF8B94A7)),
+        const SizedBox(width: 12),
+        Text(label, style: const TextStyle(color: Color(0xFFE5E7EB), fontSize: 14)),
+      ],
     );
   }
 }
