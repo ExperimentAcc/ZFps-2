@@ -1,0 +1,42 @@
+name: Remove Workflow Runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_file:
+        description: "Optional workflow filename (e.g. ci.yml). Leave blank to delete runs across all workflows."
+        required: false
+        type: string
+      limit:
+        description: "Max number of runs to check"
+        required: false
+        default: "500"
+        type: string
+
+permissions:
+  actions: write
+
+jobs:
+  remove-runs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_FILE: ${{ inputs.workflow_file }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          if [ -n "$WORKFLOW_FILE" ]; then
+            RUN_IDS=$(gh run list --repo "$REPO" --workflow "$WORKFLOW_FILE" --limit "$LIMIT" --json databaseId --jq ".[].databaseId")
+          else
+            RUN_IDS=$(gh run list --repo "$REPO" --limit "$LIMIT" --json databaseId --jq ".[].databaseId")
+          fi
+
+          for id in $RUN_IDS; do
+            if [ "$id" != "$CURRENT_RUN_ID" ]; then
+              echo "Deleting run $id..."
+              gh run delete "$id" --repo "$REPO"
+            fi
+          done
