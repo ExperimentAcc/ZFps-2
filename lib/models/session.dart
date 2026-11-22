@@ -61,6 +61,11 @@ class Session extends HiveObject {
   @HiveField(15)
   bool? realFrameData;
 
+  /// How many 2 s polls had passed when the first FPS sample was recorded.
+  /// Lets exports line FPS up with the other metrics. Null for older sessions.
+  @HiveField(16)
+  int? fpsStartPoll;
+
   Session({
     required this.id,
     required this.appName,
@@ -78,6 +83,7 @@ class Session extends HiveObject {
     this.lowFpsSamples,
     this.frameTimeHist,
     this.realFrameData,
+    this.fpsStartPoll,
   });
 
   // ------------------------------------------------------------ durations
@@ -117,9 +123,13 @@ class Session extends HiveObject {
     return valid.reduce((a, b) => a < b ? a : b);
   }
 
-  double get avgFps => _avg(fpsSamples);
-  double get maxFps => _max(fpsSamples);
-  double get minFps => _min(fpsSamples);
+  // Idle windows (0 FPS: loading screens, paused game, app in background) are
+  // not performance data, so FPS stats only use samples above zero.
+  static List<double> _pos(List<double> xs) => xs.where((e) => e > 0).toList();
+
+  double get avgFps => _avg(_pos(fpsSamples));
+  double get maxFps => _max(_pos(fpsSamples));
+  double get minFps => _min(_pos(fpsSamples));
 
   // -1 = no data (Fmt.temp shows "--" instead of a misleading 0°C)
   double get avgCpuTemp => _hasData(cpuTempSamples) ? _avg(cpuTempSamples) : -1;
