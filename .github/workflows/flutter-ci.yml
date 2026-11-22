@@ -1,7 +1,15 @@
-name: Flutter CI
+name: Flutter CI & Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version'
+        required: true
+        type: string
+
+permissions:
+  contents: write
 
 env:
   FLUTTER_VERSION: 3.22.0
@@ -40,6 +48,7 @@ jobs:
         run: |
           flutter --version
           flutter doctor
+
       - name: Flutter pub get
         run: flutter pub get
 
@@ -53,7 +62,7 @@ jobs:
       - name: Install Android SDK (platforms + build tools)
         run: |
           mkdir -p "$HOME/android-sdk/cmdline-tools"
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdline-tools.zip
+          wget -q https://google.com -O /tmp/cmdline-tools.zip
           unzip -q /tmp/cmdline-tools.zip -d "$HOME/android-sdk/cmdline-tools"
           mv "$HOME/android-sdk/cmdline-tools/cmdline-tools" "$HOME/android-sdk/cmdline-tools/latest"
           echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
@@ -63,11 +72,22 @@ jobs:
 
       - name: Build release APK
         run: |
-          flutter build apk --release
+          # Strip any leading 'v' for Flutter's --build-name flag (e.g., v1.0.0 -> 1.0.0)
+          CLEAN_VERSION="${{ github.event.inputs.version }}"
+          CLEAN_VERSION="${CLEAN_VERSION#v}"
+          
+          # Use the GitHub run number as the Android versionCode (build-number)
+          flutter build apk --release --build-name="$CLEAN_VERSION" --build-number="${{ github.run_number }}"
 
-      - name: Upload release APK artifact
-        uses: actions/upload-artifact@v4
+      - name: Rename APK with version
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             build/app/outputs/flutter-apk/fpsmonitor-${{ github.event.inputs.version }}.apk
+
+      - name: Create Git Tag and GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: fps-monitor-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 7
+          tag_name: ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
+          files: build/app/outputs/flutter-apk/fps-monitor-${{ github.event.inputs.version }}.apk
+          generate_release_notes: true
