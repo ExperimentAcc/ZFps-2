@@ -685,7 +685,9 @@ class _SessionCardState extends State<_SessionCard> {
               _StatLine(
                 icon: Icons.filter_alt_outlined,
                 label: 'Loading spikes excluded',
-                value: '${view.excludedCount} samples',
+                value: view.excludedCount == 1
+                    ? '1 sample'
+                    : '${view.excludedCount} samples',
                 accent: const Color(0xFF60A5FA),
               ),
             if ((session.pausedSeconds ?? 0) > 0)

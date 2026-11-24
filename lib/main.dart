@@ -41,6 +41,7 @@ Future<void> main() async {
       ]);
       await _initStorage();
       await MonitorService.instance.loadSettings();
+      await MonitorService.instance.recoverInterruptedSession();
       await ShizukuService.instance.getDeviceInfo();
       await NotificationService.instance.init();
     } catch (e, st) {

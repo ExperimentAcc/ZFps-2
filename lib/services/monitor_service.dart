@@ -9,6 +9,7 @@ import '../models/device_info.dart';
 import '../models/device_stats.dart';
 import '../models/session.dart';
 import '../utils/frame_stats.dart';
+import 'live_csv_logger.dart';
 import 'notification_service.dart';
 import 'overlay_service.dart';
 import 'shizuku_service.dart';
@@ -68,6 +69,7 @@ class MonitorService extends ChangeNotifier {
   bool _wasFilteredOrPaused = false;
   int _excludedSamples = 0;
 
+  String? _sessionId;
   String? _appName;
   String? _packageName;
   DateTime? _startTime;
@@ -80,6 +82,7 @@ class MonitorService extends ChangeNotifier {
   int _pollCount = 0;
   int _batteryStart = -1;
   int _batteryEnd = -1;
+  Session? _lastRecoveredSession;
 
   final List<double> _fpsSamples = [];
   final List<double> _lowSamples = [];
@@ -113,6 +116,25 @@ class MonitorService extends ChangeNotifier {
   DateTime? get startTime => _startTime;
   DeviceStats? get current => _current;
   int get pollCount => _pollCount;
+  int get csvFlushedRows => LiveCsvLogger.instance.flushedRowCount;
+  Session? get lastRecoveredSession => _lastRecoveredSession;
+
+  void clearRecoveredNotice() {
+    if (_lastRecoveredSession == null) return;
+    _lastRecoveredSession = null;
+    notifyListeners();
+  }
+
+  /// Checks at startup for an unclosed live CSV session from a game crash or
+  /// forced OS reboot and restores it into Hive.
+  Future<Session?> recoverInterruptedSession() async {
+    final recovered = await LiveCsvLogger.instance.recoverInterrupted();
+    if (recovered != null) {
+      _lastRecoveredSession = recovered;
+      notifyListeners();
+    }
+    return recovered;
+  }
 
   double? get liveStability =>
       _realFrames ? FrameStats.stabilityPercent(_frameHist) : null;
@@ -185,13 +207,25 @@ class MonitorService extends ChangeNotifier {
     _batteryEnd = -1;
     _sessionDeviceInfo =
         await ShizukuService.instance.getDeviceInfo(refresh: true);
+    final sessionId = DateTime.now().microsecondsSinceEpoch.toString();
+    _sessionId = sessionId;
     _appName = appName;
     _packageName = packageName;
     _startTime = DateTime.now();
     _pollCount = 0;
     _lastStorageSpeed = null;
+    _lastRecoveredSession = null;
 
-    // Foreground service (keeps process alive) + floating overlay
+    await LiveCsvLogger.instance.startSession(
+      sessionId: sessionId,
+      appName: appName,
+      packageName: packageName,
+      startTime: _startTime!,
+      batteryStart: _batteryStart,
+      deviceInfo: _sessionDeviceInfo ?? ShizukuService.instance.cachedDeviceInfo,
+    );
+
+    // High-priority foreground service (keeps process alive) + floating overlay
     await _invokeBool('startMonitoring', {'appName': appName});
 
     _isMonitoring = true;
@@ -214,9 +248,11 @@ class MonitorService extends ChangeNotifier {
     _pauseStartedAt = DateTime.now();
     _windowFrames.clear();
     notifyListeners();
+    await LiveCsvLogger.instance.flushNow();
     final cur = _current;
     if (cur != null) {
       await OverlayService.instance.updateOverlay(cur, paused: true);
+      await _updatePersistentNotification(cur, paused: true);
     }
   }
 
@@ -285,7 +321,7 @@ class MonitorService extends ChangeNotifier {
     final pausedSecs = _pausedDuration.inSeconds;
 
     final session = Session(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: _sessionId ?? DateTime.now().microsecondsSinceEpoch.toString(),
       appName: _appName ?? 'Unknown',
       packageName: _packageName ?? '',
       startTime: _startTime ?? DateTime.now(),
@@ -319,11 +355,13 @@ class MonitorService extends ChangeNotifier {
       debugPrint('Failed to persist session: $e');
     }
 
+    await LiveCsvLogger.instance.finishSession();
     await NotificationService.instance.showSessionComplete(session);
 
     _isMonitoring = false;
     _isPaused = false;
     _startTime = null;
+    _sessionId = null;
     notifyListeners();
     return session;
   }
@@ -432,7 +470,35 @@ class MonitorService extends ChangeNotifier {
         stability: stability,
         frameCount: frameCount,
       );
+
+      final batNow = (_pollCount % 5 == 0)
+          ? await ShizukuService.instance.getBatteryLevel()
+          : -1;
+      if (batNow >= 0) _batteryEnd = batNow;
+
+      LiveCsvLogger.instance.appendPollRow(
+        pollIndex0: _pollCount - 1,
+        fps: fpsOverride ?? stats0.fps,
+        lowFps: low ?? -1.0,
+        stabilityPct: stability ?? -1.0,
+        cpuTemp: stats0.cpuTemp,
+        gpuTemp: stats0.gpuTemp,
+        freeRamMb: stats0.freeRamMb,
+        cpuUsage: stats0.cpuUsage,
+        gpuUsage: stats0.gpuUsage,
+        storageSpeed: stats0.storageSpeed,
+        batteryCurrentMa: stats0.batteryCurrentMa,
+        powerWatts: stats0.batteryPowerWatts,
+        fpsStartPoll: _fpsStartPoll,
+        realFrameData: _realFrames,
+        excludedSamples: _excludedSamples,
+        pausedSeconds: _pausedDuration.inSeconds,
+        batteryLast: _batteryEnd,
+        frameHist: _frameHist,
+      );
+
       await OverlayService.instance.updateOverlay(stats0, paused: _isPaused);
+      await _updatePersistentNotification(stats0, paused: _isPaused);
     } catch (e) {
       debugPrint('Poll failed: $e');
     }
@@ -518,6 +584,19 @@ class MonitorService extends ChangeNotifier {
     _batteryCurrentSamples.clear();
     _powerWattsSamples.clear();
     _current = null;
+  }
+
+  Future<void> _updatePersistentNotification(
+    DeviceStats s, {
+    required bool paused,
+  }) async {
+    await _invokeBool('updateNotification', {
+      'fps': s.fps,
+      'cpuTemp': s.cpuTemp,
+      'freeRamMb': s.freeRamMb,
+      'elapsedSeconds': elapsed.inSeconds,
+      'paused': paused,
+    });
   }
 
   Future<bool> _invokeBool(String method, Map<String, dynamic> args) async {

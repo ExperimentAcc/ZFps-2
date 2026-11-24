@@ -10,6 +10,7 @@ const Color _red = Color(0xFFF87171);
 const Color _violet = Color(0xFFA78BFA);
 const Color _grid = Color(0xFF232C3D);
 const Color _dim = Color(0xFF8B94A7);
+const Color _rightAxisDim = Color(0xFF7B879B);
 
 /// 55+ green, 30-54 yellow, below 30 red (same colors as the overlay).
 Color fpsZoneColor(double fps) {
@@ -41,9 +42,51 @@ class ChartOverlaySeries {
       v >= 0 ? '${v.toStringAsFixed(decimals)}$unit' : '--';
 }
 
+class _OverlayScale {
+  final double minV;
+  final double maxV;
+  final double lo;
+  final double hi;
+
+  const _OverlayScale({
+    required this.minV,
+    required this.maxV,
+    required this.lo,
+    required this.hi,
+  });
+
+  double get denom => (hi - lo) > 0 ? (hi - lo) : 1.0;
+
+  static _OverlayScale? compute(ChartOverlaySeries ov, int n) {
+    final limit = math.min(n, ov.values.length);
+    var minV = double.infinity;
+    var maxV = -double.infinity;
+    for (var i = 0; i < limit; i++) {
+      final v = ov.values[i];
+      if (v >= 0) {
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+    }
+    if (!minV.isFinite || !maxV.isFinite) return null;
+
+    final span = math.max(maxV - minV, ov.minSpan);
+    final mid = (minV + maxV) / 2.0;
+    var lo = math.max(0.0, mid - span * 0.58);
+    var hi = lo + math.max(maxV - lo, span * 1.16);
+    if (ov.unit == '%' && maxV <= 100.0) {
+      hi = math.min(100.0, hi);
+      if (hi - lo < ov.minSpan) {
+        lo = math.max(0.0, hi - ov.minSpan);
+      }
+    }
+    return _OverlayScale(minV: minV, maxV: maxV, lo: lo, hi: hi);
+  }
+}
+
 /// FPS-over-time graph with a 1% low line, an average line, and optional
-/// secondary metric overlay lines.
-/// Tap or drag on it to inspect a point; double-tap to clear.
+/// secondary metric overlay lines with a dedicated right-hand Y-axis scale.
+/// Tap or drag on it to inspect exact values; double-tap to clear.
 class FpsGraph extends StatefulWidget {
   /// FPS per poll.
   final List<double> fps;
@@ -84,7 +127,12 @@ class FpsGraph extends StatefulWidget {
 }
 
 class _FpsGraphState extends State<FpsGraph> {
-  static const double _padL = 30, _padR = 6, _padT = 8, _padB = 20;
+  static const double _padL = 30.0, _padT = 8.0, _padB = 20.0;
+
+  double get _padR {
+    if (widget.overlays.isEmpty) return 6.0;
+    return widget.overlays.length == 1 ? 52.0 : 36.0;
+  }
 
   int? _selected;
 
@@ -115,7 +163,7 @@ class _FpsGraphState extends State<FpsGraph> {
   void _select(double dx, double width) {
     final n = widget.fps.length;
     if (n < 2) return;
-    final plotW = width - _padL - _padR;
+    final plotW = math.max(1.0, width - _padL - _padR);
     final t = math.min(1.0, math.max(0.0, (dx - _padL) / plotW));
     setState(() => _selected = (t * (n - 1)).round());
   }
@@ -131,7 +179,7 @@ class _FpsGraphState extends State<FpsGraph> {
       children: [
         ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 22),
-          child: sel == null ? _legend() : _readout(sel),
+          child: sel == null ? _legend(n) : _readout(sel),
         ),
         const SizedBox(height: 6),
         SizedBox(
@@ -148,6 +196,7 @@ class _FpsGraphState extends State<FpsGraph> {
                   selected: sel,
                   startOffset: widget.startOffset,
                   totalTime: widget.step * (n - 1),
+                  padR: _padR,
                   trimStart: widget.trimStart,
                   trimEnd: widget.trimEnd,
                   overlays: widget.overlays,
@@ -169,7 +218,7 @@ class _FpsGraphState extends State<FpsGraph> {
     );
   }
 
-  Widget _legend() {
+  Widget _legend(int n) {
     Widget dot(Color c, String t) => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -187,7 +236,16 @@ class _FpsGraphState extends State<FpsGraph> {
       dot(_green, 'FPS'),
       if (_hasLows) dot(_violet, '1% low'),
       dot(Colors.white54, 'avg ${_avg.toStringAsFixed(0)}'),
-      for (final ov in widget.overlays) dot(ov.color, ov.label),
+      for (final ov in widget.overlays)
+        Builder(
+          builder: (_) {
+            final sc = _OverlayScale.compute(ov, n);
+            final text = sc == null
+                ? ov.label
+                : '${ov.label} (${sc.minV.toStringAsFixed(ov.decimals)}–${sc.formatValue(sc.maxV)})';
+            return dot(ov.color, text);
+          },
+        ),
     ];
 
     if (widget.overlays.isEmpty && widget.interactive) {
@@ -204,11 +262,25 @@ class _FpsGraphState extends State<FpsGraph> {
       );
     }
 
-    return Wrap(
-      spacing: 12,
-      runSpacing: 4,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: items,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: items,
+        ),
+        if (widget.overlays.isNotEmpty && widget.interactive) ...[
+          const SizedBox(height: 3),
+          Text(
+            widget.overlays.length == 1
+                ? 'Right axis: ${widget.overlays.first.label} • scrub chart for exact values'
+                : 'Right axis: normalized 0–100% per metric • scrub chart for exact values',
+            style: const TextStyle(color: Color(0xFF6B7484), fontSize: 9.5),
+          ),
+        ],
+      ],
     );
   }
 
@@ -217,39 +289,47 @@ class _FpsGraphState extends State<FpsGraph> {
     final low = _hasLows ? widget.lows[i] : -1.0;
     final t = Fmt.durationHms(widget.startOffset + widget.step * i);
 
-    final parts = <Widget>[
-      Text(t, style: const TextStyle(color: _dim, fontSize: 11.5)),
-      if (fps < 0)
-        const Text(
-          'Loading screen excluded',
-          style: TextStyle(
-              color: Color(0xFF60A5FA),
-              fontSize: 12,
-              fontWeight: FontWeight.w700),
-        )
-      else ...[
-        Text('${fps.toStringAsFixed(0)} FPS',
+    Widget chip(String text, Color color) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.14),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: color.withOpacity(0.38)),
+          ),
+          child: Text(
+            text,
             style: TextStyle(
-                color: fpsZoneColor(fps),
-                fontSize: 12.5,
-                fontWeight: FontWeight.w800)),
-        if (low >= 0)
-          Text('1% low ${low.toStringAsFixed(0)}',
-              style: const TextStyle(
-                  color: _violet, fontSize: 12, fontWeight: FontWeight.w700)),
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        );
+
+    final parts = <Widget>[
+      Text(
+        t,
+        style: const TextStyle(
+          color: _dim,
+          fontSize: 11.5,
+          fontFamily: 'monospace',
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      if (fps < 0)
+        chip('Loading excluded', const Color(0xFF60A5FA))
+      else ...[
+        chip('${fps.toStringAsFixed(0)} FPS', fpsZoneColor(fps)),
+        if (low >= 0) chip('1% low ${low.toStringAsFixed(0)}', _violet),
       ],
       for (final ov in widget.overlays)
         if (i < ov.values.length && ov.values[i] >= 0)
-          Text(
-            '${ov.label} ${ov.formatValue(ov.values[i])}',
-            style: TextStyle(
-                color: ov.color, fontSize: 11.5, fontWeight: FontWeight.w700),
-          ),
+          chip('${ov.label} ${ov.formatValue(ov.values[i])}', ov.color),
     ];
 
     return Wrap(
-      spacing: 10,
-      runSpacing: 3,
+      spacing: 6,
+      runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: parts,
     );
@@ -264,6 +344,7 @@ class _GraphPainter extends CustomPainter {
   final int? selected;
   final Duration startOffset;
   final Duration totalTime;
+  final double padR;
   final int? trimStart;
   final int? trimEnd;
   final List<ChartOverlaySeries> overlays;
@@ -276,23 +357,24 @@ class _GraphPainter extends CustomPainter {
     required this.selected,
     required this.startOffset,
     required this.totalTime,
+    required this.padR,
     this.trimStart,
     this.trimEnd,
     this.overlays = const [],
   });
 
-  static const double _l = 30, _r = 6, _t = 8, _b = 20;
+  static const double _l = 30, _t = 8, _b = 20;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final plot = Rect.fromLTRB(_l, _t, size.width - _r, size.height - _b);
+    final plot = Rect.fromLTRB(_l, _t, size.width - padR, size.height - _b);
     final n = fps.length;
 
     double yOf(double v) =>
         plot.bottom - plot.height * math.min(1.0, math.max(0.0, v / yMax));
     double xOf(int i) => plot.left + plot.width * (n <= 1 ? 0 : i / (n - 1));
 
-    // Grid + y labels
+    // Grid + left FPS y-labels
     final gridPaint = Paint()
       ..color = _grid
       ..strokeWidth = 1;
@@ -377,28 +459,19 @@ class _GraphPainter extends CustomPainter {
       }
     }
 
-    // Secondary overlay metric lines (normalized onto the same timeline)
+    // Secondary overlay metric lines + dedicated right-hand secondary Y-axis
+    final scales = <_OverlayScale?>[];
     for (var ovIdx = 0; ovIdx < overlays.length; ovIdx++) {
       final ov = overlays[ovIdx];
+      final sc = _OverlayScale.compute(ov, n);
+      scales.add(sc);
+      if (sc == null) continue;
+
       final vals = ov.values;
-      var minV = double.infinity;
-      var maxV = -double.infinity;
       final limit = math.min(n, vals.length);
-      for (var i = 0; i < limit; i++) {
-        final v = vals[i];
-        if (v >= 0) {
-          if (v < minV) minV = v;
-          if (v > maxV) maxV = v;
-        }
-      }
-      if (!minV.isFinite || !maxV.isFinite) continue;
-      final span = math.max(maxV - minV, ov.minSpan);
-      final mid = (minV + maxV) / 2.0;
-      final lo = mid - span * 0.58;
-      final hi = mid + span * 0.58;
-      final denom = hi - lo;
       double yOv(double v) =>
-          plot.bottom - plot.height * math.min(1.0, math.max(0.0, (v - lo) / denom));
+          plot.bottom -
+          plot.height * math.min(1.0, math.max(0.0, (v - sc.lo) / sc.denom));
 
       final ovPaint = Paint()
         ..color = ov.color.withOpacity(0.92)
@@ -419,32 +492,42 @@ class _GraphPainter extends CustomPainter {
               Offset(xOf(i), yOv(vals[i])), 2.0, Paint()..color = ov.color);
         }
       }
+    }
 
-      if (overlays.length == 1) {
-        _text(
-          canvas,
-          ov.formatValue(maxV),
-          Offset(plot.right - 2, plot.top + 2),
-          alignRight: true,
-          top: true,
-          size: 9,
-          color: ov.color.withOpacity(0.85),
-        );
-        _text(
-          canvas,
-          ov.formatValue(minV),
-          Offset(plot.right - 2, plot.bottom - 12),
-          alignRight: true,
-          top: true,
-          size: 9,
-          color: ov.color.withOpacity(0.85),
-        );
-      }
+    if (overlays.isNotEmpty) {
+      final singleScale = overlays.length == 1 ? scales.first : null;
+      final axisColor = overlays.length == 1
+          ? overlays.first.color.withOpacity(0.40)
+          : _grid;
+      canvas.drawLine(
+        Offset(plot.right, plot.top),
+        Offset(plot.right, plot.bottom),
+        Paint()
+          ..color = axisColor
+          ..strokeWidth = 1,
+      );
 
-      final s = selected;
-      if (s != null && s >= 0 && s < limit && vals[s] >= 0) {
-        canvas.drawCircle(
-            Offset(xOf(s), yOv(vals[s])), 3.5, Paint()..color = ov.color);
+      for (var i = 0; i <= 4; i++) {
+        final y = plot.bottom - plot.height * i / 4;
+        if (singleScale != null) {
+          final tickVal = singleScale.lo + singleScale.denom * (i / 4.0);
+          final ov = overlays.first;
+          _text(
+            canvas,
+            ov.formatValue(tickVal),
+            Offset(plot.right + 5, y),
+            size: 8.8,
+            color: ov.color.withOpacity(0.92),
+          );
+        } else {
+          _text(
+            canvas,
+            '${i * 25}%',
+            Offset(plot.right + 5, y),
+            size: 8.8,
+            color: _rightAxisDim,
+          );
+        }
       }
     }
 
@@ -480,6 +563,23 @@ class _GraphPainter extends CustomPainter {
           ..color = Colors.white30
           ..strokeWidth = 1,
       );
+      for (var ovIdx = 0; ovIdx < overlays.length; ovIdx++) {
+        final ov = overlays[ovIdx];
+        final sc = scales[ovIdx];
+        if (sc == null || s >= ov.values.length || ov.values[s] < 0) continue;
+        final y = plot.bottom -
+            plot.height *
+                math.min(1.0, math.max(0.0, (ov.values[s] - sc.lo) / sc.denom));
+        canvas.drawCircle(Offset(x, y), 4.0, Paint()..color = ov.color);
+        canvas.drawCircle(
+          Offset(x, y),
+          4.0,
+          Paint()
+            ..color = const Color(0xFF0D1117)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.2,
+        );
+      }
       if (fps[s] >= 0) {
         canvas.drawCircle(
             Offset(x, yOf(fps[s])), 4.5, Paint()..color = fpsZoneColor(fps[s]));
@@ -564,6 +664,7 @@ class _GraphPainter extends CustomPainter {
       old.avg != avg ||
       old.yMax != yMax ||
       old.startOffset != startOffset ||
+      old.padR != padR ||
       old.trimStart != trimStart ||
       old.trimEnd != trimEnd ||
       old.overlays != overlays;

@@ -195,4 +195,63 @@ class ShizukuService {
       return false;
     }
   }
+
+  // --------------------------------------------------- battery & alerts
+
+  /// True when the system is not restricting background battery usage for
+  /// this app (crucial on OEM ROMs like Funtouch OS when RAM drops < 300 MB).
+  Future<bool> isBatteryOptimizationIgnored() async {
+    try {
+      return await _channel.invokeMethod<bool>('checkBatteryOptimization') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// Launches Android's quick "Allow app to always run in background" prompt.
+  Future<bool> requestIgnoreBatteryOptimization() async {
+    try {
+      return await _channel.invokeMethod<bool>('requestIgnoreBatteryOptimization') ??
+          false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// Opens App Info / Battery settings so OEM toggles (e.g. "Unrestricted" /
+  /// "Allow high background power consumption") can be configured manually.
+  Future<bool> openBatterySettings() async {
+    try {
+      return await _channel.invokeMethod<bool>('openBatterySettings') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// True when notifications are enabled and POST_NOTIFICATIONS is granted.
+  Future<bool> isNotificationPermissionGranted() async {
+    try {
+      return await _channel.invokeMethod<bool>('checkNotificationPermission') ?? true;
+    } on PlatformException {
+      return true;
+    } on MissingPluginException {
+      return true;
+    }
+  }
+
+  Future<bool> requestNotificationPermission() async {
+    try {
+      return await _channel.invokeMethod<bool>('requestNotificationPermission') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
 }
