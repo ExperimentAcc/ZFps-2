@@ -1,0 +1,43 @@
+name: Overwrite Files from ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'Direct download URL for ZFps-changed-files.zip'
+        required: true
+        type: string
+      commit_message:
+        description: 'Commit message for the overwritten files'
+        required: false
+        default: 'chore: overwrite files from ZFps-changed-files.zip'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  extract-and-overwrite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and extract ZIP
+        run: |
+          curl -L "${{ inputs.zip_url }}" -o ZFps-changed-files.zip
+          unzip -o ZFps-changed-files.zip -d .
+          rm -f ZFps-changed-files.zip
+
+      - name: Check for changes and commit
+        run: |
+          git status
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@://github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes detected compared to existing files."
+          else
+            git commit -m "${{ inputs.commit_message }}"
+            git push
+          fi
