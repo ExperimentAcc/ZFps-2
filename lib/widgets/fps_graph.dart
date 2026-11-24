@@ -242,7 +242,7 @@ class _FpsGraphState extends State<FpsGraph> {
             final sc = _OverlayScale.compute(ov, n);
             final text = sc == null
                 ? ov.label
-                : '${ov.label} (${sc.minV.toStringAsFixed(ov.decimals)}–${sc.formatValue(sc.maxV)})';
+                : '${ov.label} (${sc.minV.toStringAsFixed(ov.decimals)}–${ov.formatValue(sc.maxV)})';
             return dot(ov.color, text);
           },
         ),
