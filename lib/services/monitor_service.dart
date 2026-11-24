@@ -27,13 +27,20 @@ class MonitorService extends ChangeNotifier {
 
   static const String _settingsBoxName = 'settings';
   static const String _excludeLoadingKey = 'exclude_loading_screens';
+  static const String _excludeSub10Key = 'exclude_sub10_fps';
 
   /// Minimum FPS in a 2 s poll to treat a window as active gameplay rather than
   /// a loading screen / 0 FPS match transition.
   static const double _loadingFpsThreshold = 5.0;
 
+  /// Stricter minimum FPS threshold when "Exclude < 10 FPS Spikes" is enabled.
+  static const double _sub10FpsThreshold = 10.0;
+
   /// Single-frame gaps above this (ms) are loading stalls / pauses, not gameplay.
   static const double _maxGameplayFrameMs = 500.0;
+
+  /// Single-frame gaps above 100 ms correspond to < 10 FPS instantaneous spikes.
+  static const double _maxSub10FrameMs = 100.0;
 
   /// Boundary frames above this (ms) right after a loading screen / pause are
   /// dropped so recovery transitions do not skew 1% / 0.1% lows.
@@ -56,6 +63,7 @@ class MonitorService extends ChangeNotifier {
   bool _isMonitoring = false;
   bool _isPaused = false;
   bool _excludeLoadingScreens = true;
+  bool _excludeSub10Fps = false;
   bool _hasSeenActiveFps = false;
   bool _wasFilteredOrPaused = false;
   int _excludedSamples = 0;
@@ -75,6 +83,8 @@ class MonitorService extends ChangeNotifier {
 
   final List<double> _fpsSamples = [];
   final List<double> _lowSamples = [];
+  final List<double> _stabilitySamples = [];
+  final List<int> _frameCountSamples = [];
 
   /// Refresh-rate based FPS, only kept as a fallback if real frame data never arrives.
   final List<double> _fallbackFpsSamples = [];
@@ -96,12 +106,16 @@ class MonitorService extends ChangeNotifier {
   bool get isMonitoring => _isMonitoring;
   bool get isPaused => _isPaused;
   bool get excludeLoadingScreens => _excludeLoadingScreens;
+  bool get excludeSub10Fps => _excludeSub10Fps;
   int get excludedSamples => _excludedSamples;
   String? get appName => _appName;
   String? get packageName => _packageName;
   DateTime? get startTime => _startTime;
   DeviceStats? get current => _current;
   int get pollCount => _pollCount;
+
+  double? get liveStability =>
+      _realFrames ? FrameStats.stabilityPercent(_frameHist) : null;
 
   Duration get elapsed {
     if (_startTime == null) return Duration.zero;
@@ -117,11 +131,18 @@ class MonitorService extends ChangeNotifier {
   Future<void> loadSettings() async {
     try {
       final box = await Hive.openBox<dynamic>(_settingsBoxName);
-      final saved = box.get(_excludeLoadingKey);
-      if (saved is bool) {
-        _excludeLoadingScreens = saved;
-        notifyListeners();
+      final savedLoading = box.get(_excludeLoadingKey);
+      final savedSub10 = box.get(_excludeSub10Key);
+      var changed = false;
+      if (savedLoading is bool && savedLoading != _excludeLoadingScreens) {
+        _excludeLoadingScreens = savedLoading;
+        changed = true;
       }
+      if (savedSub10 is bool && savedSub10 != _excludeSub10Fps) {
+        _excludeSub10Fps = savedSub10;
+        changed = true;
+      }
+      if (changed) notifyListeners();
     } catch (e) {
       debugPrint('Failed to load settings: $e');
     }
@@ -134,6 +155,18 @@ class MonitorService extends ChangeNotifier {
     try {
       final box = await Hive.openBox<dynamic>(_settingsBoxName);
       await box.put(_excludeLoadingKey, value);
+    } catch (e) {
+      debugPrint('Failed to save settings: $e');
+    }
+  }
+
+  Future<void> setExcludeSub10Fps(bool value) async {
+    if (_excludeSub10Fps == value) return;
+    _excludeSub10Fps = value;
+    notifyListeners();
+    try {
+      final box = await Hive.openBox<dynamic>(_settingsBoxName);
+      await box.put(_excludeSub10Key, value);
     } catch (e) {
       debugPrint('Failed to save settings: $e');
     }
@@ -227,8 +260,8 @@ class MonitorService extends ChangeNotifier {
             ? (_batteryStart - _batteryEnd).toDouble()
             : 0.0;
 
-    // Drop idle (0 FPS / excluded) samples at the very start / end: that is
-    // the game still loading or the user leaving the game to tap Stop.
+    // Auto-trim leading/trailing blank, 0 FPS, or filtered loading windows:
+    // that is the game downloading maps/loading or the user leaving to tap Stop.
     var trimStart = 0;
     var trimEnd = _fpsSamples.length;
     if (_realFrames) {
@@ -243,6 +276,10 @@ class MonitorService extends ChangeNotifier {
         ? _fpsSamples.sublist(trimStart, trimEnd)
         : List<double>.of(_fallbackFpsSamples);
     final lowOut = _realFrames ? _lowSamples.sublist(trimStart, trimEnd) : null;
+    final stabilityOut =
+        _realFrames ? _stabilitySamples.sublist(trimStart, trimEnd) : null;
+    final countOut =
+        _realFrames ? _frameCountSamples.sublist(trimStart, trimEnd) : null;
 
     final info = _sessionDeviceInfo ?? ShizukuService.instance.cachedDeviceInfo;
     final pausedSecs = _pausedDuration.inSeconds;
@@ -272,6 +309,8 @@ class MonitorService extends ChangeNotifier {
       totalRamMb: info?.totalRamMb,
       excludedSamples: _excludedSamples,
       pausedSeconds: pausedSecs,
+      stabilitySamples: stabilityOut,
+      frameCountSamples: countOut,
     );
 
     try {
@@ -311,22 +350,31 @@ class MonitorService extends ChangeNotifier {
           ? stats.copyWith(storageSpeed: _lastStorageSpeed)
           : stats;
 
-      // Frames collected since the previous poll -> real FPS + 1% low for this window
+      // Frames collected since the previous poll -> real FPS + 1% low + stability
       final window = List<double>.of(_windowFrames);
       _windowFrames.clear();
 
       var stats0 = merged;
       double? low;
+      double? stability;
+      var frameCount = 0;
       double? fpsOverride;
 
       if (_realFrames) {
         var frames = window;
-        if (_excludeLoadingScreens) {
-          frames = frames.where((ms) => ms <= _maxGameplayFrameMs).toList();
+        final filterLoading = _excludeLoadingScreens;
+        final filterSub10 = _excludeSub10Fps;
+        final filterAny = filterLoading || filterSub10;
+
+        if (filterAny) {
+          final maxFrameMs =
+              filterSub10 ? _maxSub10FrameMs : _maxGameplayFrameMs;
+          final boundaryMs =
+              filterSub10 ? _maxSub10FrameMs : _recoveryBoundaryFrameMs;
+          frames = frames.where((ms) => ms <= maxFrameMs).toList();
           if (_wasFilteredOrPaused) {
             var skip = 0;
-            while (skip < frames.length &&
-                frames[skip] > _recoveryBoundaryFrameMs) {
+            while (skip < frames.length && frames[skip] > boundaryMs) {
               skip++;
             }
             if (skip > 0) frames = frames.sublist(skip);
@@ -334,10 +382,13 @@ class MonitorService extends ChangeNotifier {
         }
 
         final measuredFps = FrameStats.fpsOf(frames);
-        final isLoadingWindow = _excludeLoadingScreens &&
-            (measuredFps == null || measuredFps < _loadingFpsThreshold);
+        final minFps = filterSub10
+            ? _sub10FpsThreshold
+            : (filterLoading ? _loadingFpsThreshold : 0.0);
+        final isFilteredWindow = filterAny &&
+            (measuredFps == null || measuredFps < minFps);
 
-        if (isLoadingWindow) {
+        if (isFilteredWindow) {
           if (_hasSeenActiveFps) {
             _excludedSamples++;
           }
@@ -345,6 +396,8 @@ class MonitorService extends ChangeNotifier {
           stats0 = merged.copyWith(fps: measuredFps ?? 0.0);
           fpsOverride = -1.0;
           low = -1.0;
+          stability = -1.0;
+          frameCount = 0;
         } else {
           _hasSeenActiveFps = true;
           _wasFilteredOrPaused = false;
@@ -353,18 +406,32 @@ class MonitorService extends ChangeNotifier {
           }
           stats0 = merged.copyWith(fps: measuredFps ?? 0.0);
           low = FrameStats.lowFpsOfList(frames, 0.01);
+          stability = FrameStats.stabilityOfList(frames);
+          frameCount = frames.length;
         }
-      } else if (_excludeLoadingScreens && merged.fps <= 0) {
-        if (_hasSeenActiveFps) {
-          _excludedSamples++;
-        }
-        fpsOverride = -1.0;
       } else {
-        if (merged.fps > 0) _hasSeenActiveFps = true;
+        final filterSub10 = _excludeSub10Fps;
+        final filterLoading = _excludeLoadingScreens;
+        final minFps = filterSub10 ? _sub10FpsThreshold : 0.0;
+        if ((filterLoading || filterSub10) && merged.fps <= minFps) {
+          if (_hasSeenActiveFps) {
+            _excludedSamples++;
+          }
+          fpsOverride = -1.0;
+        } else if (merged.fps > 0) {
+          _hasSeenActiveFps = true;
+        }
       }
 
       _current = stats0;
-      _record(stats0, real: _realFrames, fpsOverride: fpsOverride, low: low);
+      _record(
+        stats0,
+        real: _realFrames,
+        fpsOverride: fpsOverride,
+        low: low,
+        stability: stability,
+        frameCount: frameCount,
+      );
       await OverlayService.instance.updateOverlay(stats0, paused: _isPaused);
     } catch (e) {
       debugPrint('Poll failed: $e');
@@ -399,12 +466,16 @@ class MonitorService extends ChangeNotifier {
     required bool real,
     double? fpsOverride,
     double? low,
+    double? stability,
+    int frameCount = 0,
   }) {
     final recordedFps = fpsOverride ?? s.fps;
     if (real) {
       _fpsStartPoll ??= _pollCount - 1;
       _fpsSamples.add(recordedFps);
-      _lowSamples.add(low ?? -1.0); // keeps both lists aligned
+      _lowSamples.add(low ?? -1.0); // keeps lists aligned
+      _stabilitySamples.add(stability ?? -1.0);
+      _frameCountSamples.add(frameCount);
     } else if (recordedFps >= 0) {
       _fallbackFpsSamples.add(recordedFps);
     }
@@ -423,6 +494,8 @@ class MonitorService extends ChangeNotifier {
   void _resetSamples() {
     _fpsSamples.clear();
     _lowSamples.clear();
+    _stabilitySamples.clear();
+    _frameCountSamples.clear();
     _fallbackFpsSamples.clear();
     _windowFrames.clear();
     _frameHist = FrameStats.emptyHistogram();

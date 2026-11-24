@@ -12,6 +12,7 @@ import '../widgets/stat_card.dart';
 import 'app_selection_screen.dart';
 import 'customize_screen.dart';
 import 'report_screen.dart';
+import 'settings_screen.dart';
 
 const Color _bg = Color(0xFF0D1117);
 const Color _card = Color(0xFF161C27);
@@ -194,6 +195,13 @@ class _HomeScreenState extends State<HomeScreen> {
               MaterialPageRoute(builder: (_) => const ReportScreen()),
             ),
           ),
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined, color: _textDim),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
           const SizedBox(width: 4),
         ],
       ),
@@ -228,11 +236,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 _TargetCard(
                   app: _selectedApp,
                   onTap: _pickApp,
-                ),
-                const SizedBox(height: 12),
-                _ExcludeLoadingCard(
-                  enabled: monitor.excludeLoadingScreens,
-                  onChanged: (v) => monitor.setExcludeLoadingScreens(v),
                 ),
                 if (monitor.isMonitoring) ...[
                   const SizedBox(height: 14),
@@ -746,6 +749,29 @@ class _LivePanel extends StatelessWidget {
                       fontWeight: FontWeight.w900,
                       letterSpacing: 2,
                       fontSize: 11)),
+              if (monitor.liveStability != null) ...[
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: (monitor.liveStability! >= 90
+                            ? _green
+                            : (monitor.liveStability! >= 75 ? _amber : _red))
+                        .withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Stability ${monitor.liveStability!.toStringAsFixed(0)}%',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      color: monitor.liveStability! >= 90
+                          ? _green
+                          : (monitor.liveStability! >= 75 ? _amber : _red),
+                    ),
+                  ),
+                ),
+              ],
               const Spacer(),
               const Icon(Icons.timer_outlined, size: 15, color: _textDim),
               const SizedBox(width: 5),
@@ -903,65 +929,6 @@ class _CustomizeCard extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// Toggle card to filter out 0 FPS spikes and loading screens from 1% / 0.1% lows.
-class _ExcludeLoadingCard extends StatelessWidget {
-  final bool enabled;
-  final ValueChanged<bool> onChanged;
-
-  const _ExcludeLoadingCard({
-    required this.enabled,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: _card,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _border),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: _blue.withOpacity(0.14),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: const Icon(Icons.filter_alt_outlined, color: _blue, size: 20),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Exclude loading screens',
-                    style: TextStyle(
-                        color: _text,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700)),
-                SizedBox(height: 2),
-                Text(
-                  'Filter 0 FPS & transition spikes from 1% / 0.1% lows',
-                  style: TextStyle(color: _textDim, fontSize: 11.5),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: enabled,
-            activeColor: _green,
-            onChanged: onChanged,
-          ),
-        ],
       ),
     );
   }

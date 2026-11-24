@@ -94,6 +94,14 @@ class Session extends HiveObject {
   @HiveField(23)
   int? pausedSeconds;
 
+  /// Per-poll frame-time stability score 0-100 (-1 = unknown), aligned to [fpsSamples].
+  @HiveField(24)
+  List<double>? stabilitySamples;
+
+  /// Number of valid frames in each poll, aligned to [fpsSamples].
+  @HiveField(25)
+  List<int>? frameCountSamples;
+
   Session({
     required this.id,
     required this.appName,
@@ -119,6 +127,8 @@ class Session extends HiveObject {
     this.totalRamMb,
     this.excludedSamples,
     this.pausedSeconds,
+    this.stabilitySamples,
+    this.frameCountSamples,
   });
 
   // ------------------------------------------------------------ durations
@@ -174,8 +184,11 @@ class Session extends HiveObject {
 
   // -1 = no data (Fmt.temp shows "--" instead of a misleading 0°C)
   double get avgCpuTemp => _hasData(cpuTempSamples) ? _avg(cpuTempSamples) : -1;
+  double get maxCpuTemp => _hasData(cpuTempSamples) ? _max(cpuTempSamples) : -1;
   double get avgGpuTemp => _hasData(gpuTempSamples) ? _avg(gpuTempSamples) : -1;
+  double get maxGpuTemp => _hasData(gpuTempSamples) ? _max(gpuTempSamples) : -1;
   double get avgFreeRam => _avg(freeRamSamples);
+  double get minFreeRam => _hasData(freeRamSamples) ? _min(freeRamSamples) : -1;
 
   double get avgCpuUsage => _hasData(cpuUsageSamples) ? _avg(cpuUsageSamples) : -1;
   double get maxCpuUsage => _hasData(cpuUsageSamples) ? _max(cpuUsageSamples) : -1;
@@ -219,4 +232,19 @@ class Session extends HiveObject {
   /// Average frame time in milliseconds (null when unavailable).
   double? get avgFrameTimeMs =>
       hasFrameData ? FrameStats.avgFrameMs(frameTimeHist!) : null;
+
+  /// Percentage of frames within +/- 3 ms of target frame pacing (null when unavailable).
+  double? get stabilityPercent {
+    if (hasFrameData) {
+      return FrameStats.stabilityPercent(frameTimeHist!);
+    }
+    final list = stabilitySamples;
+    if (list == null) return null;
+    final valid = list.where((e) => e >= 0).toList();
+    if (valid.isEmpty) return null;
+    return valid.reduce((a, b) => a + b) / valid.length;
+  }
+
+  List<double> get stabilities => stabilitySamples ?? const <double>[];
+  List<int> get frameCounts => frameCountSamples ?? const <int>[];
 }

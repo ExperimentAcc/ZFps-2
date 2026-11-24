@@ -43,13 +43,17 @@ class SessionAdapter extends TypeAdapter<Session> {
       totalRamMb: (fields[21] as num?)?.toDouble(),
       excludedSamples: (fields[22] as num?)?.toInt(),
       pausedSeconds: (fields[23] as num?)?.toInt(),
+      stabilitySamples:
+          fields[24] == null ? null : _doubleList(fields[24]),
+      frameCountSamples:
+          fields[25] == null ? null : _intList(fields[25]),
     );
   }
 
   @override
   void write(BinaryWriter writer, Session obj) {
     writer
-      ..writeByte(24)
+      ..writeByte(26)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -97,7 +101,11 @@ class SessionAdapter extends TypeAdapter<Session> {
       ..writeByte(22)
       ..write(obj.excludedSamples)
       ..writeByte(23)
-      ..write(obj.pausedSeconds);
+      ..write(obj.pausedSeconds)
+      ..writeByte(24)
+      ..write(obj.stabilitySamples)
+      ..writeByte(25)
+      ..write(obj.frameCountSamples);
   }
 
   static List<double> _doubleList(dynamic v) {

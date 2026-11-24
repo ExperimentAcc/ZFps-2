@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import '../models/device_info.dart';
 import '../models/session.dart';
+import '../models/session_summary.dart';
+import '../utils/format_utils.dart';
 
 /// Builds CSV exports of saved sessions.
 ///
@@ -71,19 +73,23 @@ class CsvExport {
       'one_percent_low_fps',
       'point1_percent_low_fps',
       'avg_frame_time_ms',
+      'stability_pct',
       'avg_cpu_temp_c',
+      'peak_cpu_temp_c',
       'avg_gpu_temp_c',
+      'peak_gpu_temp_c',
       'avg_cpu_usage_pct',
       'max_cpu_usage_pct',
       'avg_gpu_usage_pct',
       'max_gpu_usage_pct',
       'avg_free_ram_mb',
+      'lowest_free_ram_mb',
       'avg_storage_mb_s',
       'battery_drop_pct',
       'avg_battery_current_ma',
-      'max_battery_current_ma',
+      'peak_battery_current_ma',
       'avg_power_w',
-      'max_power_w',
+      'peak_power_w',
       'excluded_loading_samples',
       'fps_samples',
       'fps_source',
@@ -110,13 +116,17 @@ class CsvExport {
         _n(s.onePercentLow),
         _n(s.pointOnePercentLow),
         _n(s.avgFrameTimeMs, 2),
+        _n(s.stabilityPercent),
         _n(s.avgCpuTemp),
+        _n(s.maxCpuTemp),
         _n(s.avgGpuTemp),
+        _n(s.maxGpuTemp),
         _n(s.avgCpuUsage),
         _n(s.maxCpuUsage),
         _n(s.avgGpuUsage),
         _n(s.maxGpuUsage),
         _pos(s.avgFreeRam, 0),
+        _n(s.minFreeRam, 0),
         _pos(s.avgStorageSpeed),
         _n(s.batteryDropPercent, 0),
         _n(s.avgBatteryCurrentMa, 0),
@@ -134,6 +144,7 @@ class CsvExport {
   static Uint8List sessionSamples(
     Session s, {
     DeviceInfo? fallbackDevice,
+    SessionSummary? summary,
   }) {
     final model = s.deviceModel ?? fallbackDevice?.deviceModel ?? '';
     final soc = s.socName ?? fallbackDevice?.socName ?? '';
@@ -145,9 +156,10 @@ class CsvExport {
     // are recorded from the first poll, so shift FPS by that offset.
     final start = s.fpsStartPoll ?? 0;
     final lows = s.lows;
+    final stabilities = s.stabilities;
     final currents = s.batteryCurrents;
     final watts = s.powerWatts;
-    final rows = [
+    final totalRows = [
       start + s.fpsSamples.length,
       s.cpuTempSamples.length,
       s.gpuTempSamples.length,
@@ -159,6 +171,14 @@ class CsvExport {
       watts.length,
     ].reduce(math.max);
 
+    final trimmed = summary != null && summary.isTrimmed;
+    final rowFrom = trimmed ? math.max(0, summary.hwStart) : 0;
+    final rowTo = trimmed
+        ? math.min(totalRows - 1, summary.hwEnd)
+        : (totalRows - 1);
+
+    final effective = summary ?? SessionSummary.fromSession(s);
+
     final b = StringBuffer()
       ..writeln(_row(['device_model', model]))
       ..writeln(_row(['chipset', soc]))
@@ -166,13 +186,25 @@ class CsvExport {
       ..writeln(_row(['app', s.appName]))
       ..writeln(_row(['package', s.packageName]))
       ..writeln(_row(['start_time_local', _ts(s.startTime)]))
-      ..writeln(_row(['duration_s', s.duration.inSeconds]))
+      ..writeln(_row(['duration_s', effective.duration.inSeconds]))
+      ..writeln(_row(['stability_pct', _n(effective.stabilityPercent)]));
+
+    if (trimmed) {
+      b.writeln(_row([
+        'trimmed_window',
+        '${Fmt.durationHms(Duration(seconds: summary.trimStart * stepSeconds))} - '
+            '${Fmt.durationHms(Duration(seconds: summary.trimEnd * stepSeconds))}',
+      ]));
+    }
+
+    b
       ..writeln()
       ..writeln(_row([
         'sample',
         'time_s',
         'fps',
         'one_percent_low_fps',
+        'stability_pct',
         'cpu_temp_c',
         'gpu_temp_c',
         'free_ram_mb',
@@ -183,7 +215,7 @@ class CsvExport {
         'power_w',
       ]));
 
-    for (var i = 0; i < rows; i++) {
+    for (var i = rowFrom; i <= rowTo; i++) {
       final j = i - start;
       final hasFps = j >= 0 && j < s.fpsSamples.length;
       b.writeln(_row([
@@ -191,6 +223,7 @@ class CsvExport {
         i * stepSeconds,
         hasFps ? _n(s.fpsSamples[j]) : '',
         (hasFps && j < lows.length) ? _n(lows[j]) : '',
+        (hasFps && j < stabilities.length) ? _n(stabilities[j]) : '',
         _at(s.cpuTempSamples, i),
         _at(s.gpuTempSamples, i),
         _at(s.freeRamSamples, i, 0),

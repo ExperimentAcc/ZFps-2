@@ -4,6 +4,8 @@ class Fmt {
 
   static String temp(double v) => v >= 0 ? '${v.toStringAsFixed(0)}°C' : '--';
 
+  static String tempExact(double v) => v >= 0 ? '${v.toStringAsFixed(1)}°C' : '--';
+
   static String percent(double v) => v >= 0 ? '${v.toStringAsFixed(0)}%' : '--';
 
   static String mb(double v) => v >= 0 ? '${v.toStringAsFixed(0)} MB' : '--';

@@ -3,13 +3,13 @@ import 'package:flutter/material.dart';
 import '../database/app_database.dart';
 import '../models/device_info.dart';
 import '../models/session.dart';
+import '../models/session_summary.dart';
 import '../services/export_service.dart';
 import '../services/shizuku_service.dart';
 import '../utils/csv_export.dart';
 import '../utils/format_utils.dart';
 import '../widgets/fps_graph.dart';
 import '../widgets/report_share.dart';
-import '../widgets/stat_card.dart';
 
 /// History of saved sessions with expandable per-session stats.
 class ReportScreen extends StatefulWidget {
@@ -182,7 +182,7 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 }
 
-class _SessionCard extends StatelessWidget {
+class _SessionCard extends StatefulWidget {
   final Session session;
   final bool initiallyExpanded;
   final VoidCallback onDelete;
@@ -194,12 +194,44 @@ class _SessionCard extends StatelessWidget {
   });
 
   @override
+  State<_SessionCard> createState() => _SessionCardState();
+}
+
+class _SessionCardState extends State<_SessionCard> {
+  int? _trimStart;
+  int? _trimEnd;
+
+  @override
+  void didUpdateWidget(covariant _SessionCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session.id != widget.session.id) {
+      _trimStart = null;
+      _trimEnd = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final fpsColor = session.avgFps >= 50
+    final session = widget.session;
+    final view = SessionSummary.fromSession(
+      session,
+      trimStart: _trimStart,
+      trimEnd: _trimEnd,
+    );
+    final fpsColor = view.avgFps >= 50
         ? const Color(0xFF4ADE80)
-        : session.avgFps >= 30
+        : view.avgFps >= 30
             ? const Color(0xFFFBBF24)
             : const Color(0xFFF87171);
+
+    final stability = view.stabilityPercent;
+    final stabilityColor = stability == null
+        ? const Color(0xFF8B94A7)
+        : (stability >= 90
+            ? const Color(0xFF4ADE80)
+            : (stability >= 75
+                ? const Color(0xFFFBBF24)
+                : const Color(0xFFF87171)));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -213,7 +245,7 @@ class _SessionCard extends StatelessWidget {
         // Keep the ExpansionTile divider invisible for a cleaner card
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: initiallyExpanded,
+          initiallyExpanded: widget.initiallyExpanded,
           tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
           iconColor: const Color(0xFF8B94A7),
@@ -229,7 +261,7 @@ class _SessionCard extends StatelessWidget {
                 ),
                 alignment: Alignment.center,
                 child: Text(
-                  session.avgFps > 0 ? session.avgFps.toStringAsFixed(0) : '--',
+                  view.avgFps > 0 ? view.avgFps.toStringAsFixed(0) : '--',
                   style: TextStyle(
                     color: fpsColor,
                     fontWeight: FontWeight.w800,
@@ -254,7 +286,7 @@ class _SessionCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${Fmt.dateTime(session.startTime)} • ${session.durationFormatted}',
+                      '${Fmt.dateTime(session.startTime)} • ${view.durationFormatted}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 11, color: Color(0xFF8B94A7)),
@@ -269,9 +301,9 @@ class _SessionCard extends StatelessWidget {
                 color: const Color(0xFF1F2733),
                 onSelected: (value) {
                   if (value == 'image') {
-                    showShareReportDialog(context, session);
+                    showShareReportDialog(context, session, summary: view);
                   } else {
-                    _exportSessionCsv(context, session);
+                    _exportSessionCsv(context, session, summary: view);
                   }
                 },
                 itemBuilder: (_) => const [
@@ -288,7 +320,7 @@ class _SessionCard extends StatelessWidget {
               IconButton(
                 tooltip: 'Delete session',
                 icon: const Icon(Icons.delete_outline, color: Color(0xFF6B7484)),
-                onPressed: onDelete,
+                onPressed: widget.onDelete,
               ),
             ],
           ),
@@ -327,12 +359,49 @@ class _SessionCard extends StatelessWidget {
               ),
               const SizedBox(height: 10),
             ],
+            if (stability != null) ...[
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: stabilityColor.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: stabilityColor.withOpacity(0.35)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.waves_rounded, size: 17, color: stabilityColor),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Frame-time stability (±3 ms target)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFFE5E7EB),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${stability.toStringAsFixed(0)}%',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: stabilityColor,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             Row(
               children: [
                 Expanded(
                   child: _MiniStat(
                     label: 'Avg FPS',
-                    value: session.avgFps > 0 ? session.avgFps.toStringAsFixed(0) : '--',
+                    value: view.avgFps > 0 ? view.avgFps.toStringAsFixed(0) : '--',
                     accent: fpsColor,
                   ),
                 ),
@@ -340,7 +409,7 @@ class _SessionCard extends StatelessWidget {
                 Expanded(
                   child: _MiniStat(
                     label: 'Max FPS',
-                    value: session.maxFps > 0 ? session.maxFps.toStringAsFixed(0) : '--',
+                    value: view.maxFps > 0 ? view.maxFps.toStringAsFixed(0) : '--',
                     accent: const Color(0xFF60A5FA),
                   ),
                 ),
@@ -348,7 +417,7 @@ class _SessionCard extends StatelessWidget {
                 Expanded(
                   child: _MiniStat(
                     label: 'Samples',
-                    value: '${session.sampleCount}',
+                    value: '${view.sampleCount}',
                     accent: const Color(0xFFA78BFA),
                   ),
                 ),
@@ -360,7 +429,7 @@ class _SessionCard extends StatelessWidget {
                 Expanded(
                   child: _MiniStat(
                     label: 'Min FPS',
-                    value: session.minFps > 0 ? session.minFps.toStringAsFixed(0) : '--',
+                    value: view.minFps > 0 ? view.minFps.toStringAsFixed(0) : '--',
                     accent: const Color(0xFFF87171),
                   ),
                 ),
@@ -368,23 +437,48 @@ class _SessionCard extends StatelessWidget {
                 Expanded(
                   child: _MiniStat(
                     label: '1% Low',
-                    value: _fpsOrDash(session.onePercentLow),
-                    accent: _zone(session.onePercentLow),
+                    value: _fpsOrDash(view.onePercentLow),
+                    accent: _zone(view.onePercentLow),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: _MiniStat(
                     label: '0.1% Low',
-                    value: _fpsOrDash(session.pointOnePercentLow),
-                    accent: _zone(session.pointOnePercentLow),
+                    value: _fpsOrDash(view.pointOnePercentLow),
+                    accent: _zone(view.pointOnePercentLow),
                   ),
                 ),
               ],
             ),
             if (session.fpsSamples.where((e) => e >= 0).length >= 2) ...[
               const SizedBox(height: 12),
-              _GraphCard(session: session),
+              _GraphCard(
+                session: session,
+                trimStart: _trimStart,
+                trimEnd: _trimEnd,
+              ),
+            ],
+            if (session.fpsSamples.length >= 4) ...[
+              const SizedBox(height: 10),
+              _TrimTimelineCard(
+                totalSamples: session.fpsSamples.length,
+                trimStart: _trimStart ?? 0,
+                trimEnd: _trimEnd ?? session.fpsSamples.length - 1,
+                onChanged: (s, e) => setState(() {
+                  if (s <= 0 && e >= session.fpsSamples.length - 1) {
+                    _trimStart = null;
+                    _trimEnd = null;
+                  } else {
+                    _trimStart = s;
+                    _trimEnd = e;
+                  }
+                }),
+                onReset: () => setState(() {
+                  _trimStart = null;
+                  _trimEnd = null;
+                }),
+              ),
             ],
             if (session.realFrameData == false)
               const Padding(
@@ -396,11 +490,11 @@ class _SessionCard extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 10),
-            if (session.avgFrameTimeMs != null)
+            if (view.avgFrameTimeMs != null)
               _StatLine(
                 icon: Icons.timer_outlined,
                 label: 'Avg frame time',
-                value: '${session.avgFrameTimeMs!.toStringAsFixed(1)} ms',
+                value: '${view.avgFrameTimeMs!.toStringAsFixed(1)} ms',
                 accent: const Color(0xFF60A5FA),
               ),
             _StatLine(
@@ -411,52 +505,57 @@ class _SessionCard extends StatelessWidget {
             ),
             _StatLine(
               icon: Icons.bolt_outlined,
-              label: 'Battery current (avg / max)',
+              label: 'Battery current (avg / peak)',
               value:
-                  '${Fmt.currentMa(session.avgBatteryCurrentMa)} / ${Fmt.currentMa(session.maxBatteryCurrentMa)}',
+                  '${Fmt.currentMa(view.avgBatteryCurrentMa)} / ${Fmt.currentMa(view.maxBatteryCurrentMa)}',
               accent: const Color(0xFFFBBF24),
             ),
             _StatLine(
               icon: Icons.power_outlined,
-              label: 'Power draw (avg / max)',
+              label: 'Power draw (avg / peak)',
               value:
-                  '${Fmt.watts(session.avgPowerWatts)} / ${Fmt.watts(session.maxPowerWatts)}',
+                  '${Fmt.watts(view.avgPowerWatts)} / ${Fmt.watts(view.maxPowerWatts)}',
               accent: const Color(0xFFFB923C),
             ),
             _StatLine(
               icon: Icons.memory_outlined,
-              label: 'CPU usage (avg / max)',
-              value: '${Fmt.percent(session.avgCpuUsage)} / ${Fmt.percent(session.maxCpuUsage)}',
+              label: 'CPU usage (avg / peak)',
+              value:
+                  '${Fmt.percent(view.avgCpuUsage)} / ${Fmt.percent(view.maxCpuUsage)}',
               accent: const Color(0xFF60A5FA),
             ),
             _StatLine(
               icon: Icons.grid_view_outlined,
-              label: 'GPU usage (avg / max)',
-              value: '${Fmt.percent(session.avgGpuUsage)} / ${Fmt.percent(session.maxGpuUsage)}',
+              label: 'GPU usage (avg / peak)',
+              value:
+                  '${Fmt.percent(view.avgGpuUsage)} / ${Fmt.percent(view.maxGpuUsage)}',
               accent: const Color(0xFFA78BFA),
             ),
             _StatLine(
               icon: Icons.thermostat_outlined,
-              label: 'CPU temperature (avg)',
-              value: Fmt.temp(session.avgCpuTemp),
+              label: 'CPU temperature (avg / peak)',
+              value:
+                  '${Fmt.temp(view.avgCpuTemp)} / ${Fmt.tempExact(view.maxCpuTemp)}',
               accent: const Color(0xFFF87171),
             ),
             _StatLine(
               icon: Icons.thermostat_outlined,
-              label: 'GPU temperature (avg)',
-              value: Fmt.temp(session.avgGpuTemp),
+              label: 'GPU temperature (avg / peak)',
+              value:
+                  '${Fmt.temp(view.avgGpuTemp)} / ${Fmt.tempExact(view.maxGpuTemp)}',
               accent: const Color(0xFFFB923C),
             ),
             _StatLine(
               icon: Icons.sd_storage_outlined,
               label: 'Storage speed (avg)',
-              value: Fmt.speed(session.avgStorageSpeed),
+              value: Fmt.speed(view.avgStorageSpeed),
               accent: const Color(0xFF34D399),
             ),
             _StatLine(
               icon: Icons.storage_outlined,
-              label: 'Free RAM (avg)',
-              value: Fmt.mb(session.avgFreeRam),
+              label: 'Free RAM (avg / lowest)',
+              value:
+                  '${Fmt.mb(view.avgFreeRam)} / ${Fmt.mb(view.minFreeRam)}',
               accent: const Color(0xFF4ADE80),
             ),
             if ((session.excludedSamples ?? 0) > 0)
@@ -475,8 +574,8 @@ class _SessionCard extends StatelessWidget {
               ),
             _StatLine(
               icon: Icons.schedule_outlined,
-              label: 'Duration',
-              value: session.durationFormatted,
+              label: view.isTrimmed ? 'Trimmed duration' : 'Duration',
+              value: view.durationFormatted,
               accent: const Color(0xFF8B94A7),
             ),
             const SizedBox(height: 6),
@@ -488,6 +587,106 @@ class _SessionCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _TrimTimelineCard extends StatelessWidget {
+  final int totalSamples;
+  final int trimStart;
+  final int trimEnd;
+  final void Function(int start, int end) onChanged;
+  final VoidCallback onReset;
+
+  const _TrimTimelineCard({
+    required this.totalSamples,
+    required this.trimStart,
+    required this.trimEnd,
+    required this.onChanged,
+    required this.onReset,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isTrimmed = trimStart > 0 || trimEnd < totalSamples - 1;
+    final startLabel = Fmt.durationHms(Duration(seconds: trimStart * 2));
+    final endLabel = Fmt.durationHms(Duration(seconds: trimEnd * 2));
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2130),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF232C3D)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.content_cut_rounded,
+                  size: 15, color: Color(0xFF60A5FA)),
+              const SizedBox(width: 7),
+              const Text(
+                'Trim timeline',
+                style: TextStyle(
+                  color: Color(0xFFE5E7EB),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '$startLabel – $endLabel',
+                style: const TextStyle(
+                  color: Color(0xFF8B94A7),
+                  fontSize: 11.5,
+                  fontFamily: 'monospace',
+                ),
+              ),
+              const Spacer(),
+              if (isTrimmed)
+                GestureDetector(
+                  onTap: onReset,
+                  child: const Text(
+                    'Reset',
+                    style: TextStyle(
+                      color: Color(0xFF60A5FA),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+            ),
+            child: RangeSlider(
+              values: RangeValues(trimStart.toDouble(), trimEnd.toDouble()),
+              min: 0,
+              max: (totalSamples - 1).toDouble(),
+              divisions: totalSamples - 1,
+              activeColor: const Color(0xFF60A5FA),
+              inactiveColor: const Color(0xFF2B364A),
+              onChanged: (values) {
+                var s = values.start.round();
+                var e = values.end.round();
+                if (e - s < 1) {
+                  if (s > 0) {
+                    s = e - 1;
+                  } else {
+                    e = s + 1;
+                  }
+                }
+                onChanged(s, e);
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -587,8 +786,14 @@ Color _zone(double? v) => v == null ? const Color(0xFF8B94A7) : fpsZoneColor(v);
 /// "FPS over time" card with the interactive graph.
 class _GraphCard extends StatelessWidget {
   final Session session;
+  final int? trimStart;
+  final int? trimEnd;
 
-  const _GraphCard({required this.session});
+  const _GraphCard({
+    required this.session,
+    this.trimStart,
+    this.trimEnd,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -614,6 +819,8 @@ class _GraphCard extends StatelessWidget {
           FpsGraph(
             fps: session.fpsSamples,
             lows: session.lows,
+            trimStart: trimStart,
+            trimEnd: trimEnd,
           ),
         ],
       ),
@@ -621,11 +828,16 @@ class _GraphCard extends StatelessWidget {
   }
 }
 
-Future<void> _exportSessionCsv(BuildContext context, Session session) async {
+Future<void> _exportSessionCsv(
+  BuildContext context,
+  Session session, {
+  SessionSummary? summary,
+}) async {
   final ok = await ExportService.instance.shareBytes(
     CsvExport.sessionSamples(
       session,
       fallbackDevice: ShizukuService.instance.cachedDeviceInfo,
+      summary: summary,
     ),
     fileName: '${CsvExport.baseName(session)}.csv',
     mimeType: 'text/csv',

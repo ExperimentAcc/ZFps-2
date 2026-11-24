@@ -33,12 +33,18 @@ class FpsGraph extends StatefulWidget {
   /// Tap / drag to inspect points. Turn off for static images.
   final bool interactive;
 
+  /// Optional inclusive sample indices highlighting the trimmed timeline.
+  final int? trimStart;
+  final int? trimEnd;
+
   const FpsGraph({
     super.key,
     required this.fps,
     required this.lows,
     this.step = const Duration(seconds: 2),
     this.interactive = true,
+    this.trimStart,
+    this.trimEnd,
   });
 
   @override
@@ -54,7 +60,13 @@ class _FpsGraphState extends State<FpsGraph> {
       widget.lows.length == widget.fps.length && widget.lows.any((e) => e >= 0);
 
   double get _avg {
-    final v = widget.fps.where((e) => e > 0).toList();
+    final s = (widget.trimStart ?? 0).clamp(0, math.max(0, widget.fps.length - 1));
+    final e = (widget.trimEnd ?? math.max(0, widget.fps.length - 1))
+        .clamp(s, math.max(0, widget.fps.length - 1));
+    final v = <double>[];
+    for (var i = s; i <= e && i < widget.fps.length; i++) {
+      if (widget.fps[i] > 0) v.add(widget.fps[i]);
+    }
     if (v.isEmpty) return 0;
     return v.reduce((a, b) => a + b) / v.length;
   }
@@ -100,6 +112,8 @@ class _FpsGraphState extends State<FpsGraph> {
                   yMax: _yMax,
                   selected: sel,
                   totalTime: widget.step * (n - 1),
+                  trimStart: widget.trimStart,
+                  trimEnd: widget.trimEnd,
                 ),
               );
               if (!widget.interactive) return graph;
@@ -189,6 +203,8 @@ class _GraphPainter extends CustomPainter {
   final double yMax;
   final int? selected;
   final Duration totalTime;
+  final int? trimStart;
+  final int? trimEnd;
 
   _GraphPainter({
     required this.fps,
@@ -197,6 +213,8 @@ class _GraphPainter extends CustomPainter {
     required this.yMax,
     required this.selected,
     required this.totalTime,
+    this.trimStart,
+    this.trimEnd,
   });
 
   static const double _l = 30, _r = 6, _t = 8, _b = 20;
@@ -327,6 +345,30 @@ class _GraphPainter extends CustomPainter {
         }
       }
     }
+
+    // Dim trimmed-out sections when a timeline trim is active
+    final ts = trimStart;
+    final te = trimEnd;
+    if (ts != null && te != null && (ts > 0 || te < n - 1)) {
+      final dimPaint = Paint()..color = const Color(0x990D1117);
+      final guidePaint = Paint()
+        ..color = const Color(0xFF60A5FA)
+        ..strokeWidth = 1.5;
+      if (ts > 0) {
+        final xStart = xOf(ts);
+        canvas.drawRect(
+            Rect.fromLTRB(plot.left, plot.top, xStart, plot.bottom), dimPaint);
+        canvas.drawLine(
+            Offset(xStart, plot.top), Offset(xStart, plot.bottom), guidePaint);
+      }
+      if (te < n - 1) {
+        final xEnd = xOf(te);
+        canvas.drawRect(
+            Rect.fromLTRB(xEnd, plot.top, plot.right, plot.bottom), dimPaint);
+        canvas.drawLine(
+            Offset(xEnd, plot.top), Offset(xEnd, plot.bottom), guidePaint);
+      }
+    }
   }
 
   void _dashed(Canvas canvas, Offset a, Offset b, Paint paint) {
@@ -360,5 +402,7 @@ class _GraphPainter extends CustomPainter {
       old.fps != fps ||
       old.lows != lows ||
       old.avg != avg ||
-      old.yMax != yMax;
+      old.yMax != yMax ||
+      old.trimStart != trimStart ||
+      old.trimEnd != trimEnd;
 }
