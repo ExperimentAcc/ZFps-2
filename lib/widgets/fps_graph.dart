@@ -60,9 +60,9 @@ class _FpsGraphState extends State<FpsGraph> {
       widget.lows.length == widget.fps.length && widget.lows.any((e) => e >= 0);
 
   double get _avg {
-    final s = (widget.trimStart ?? 0).clamp(0, math.max(0, widget.fps.length - 1));
-    final e = (widget.trimEnd ?? math.max(0, widget.fps.length - 1))
-        .clamp(s, math.max(0, widget.fps.length - 1));
+    final maxIdx = math.max(0, widget.fps.length - 1);
+    final s = (widget.trimStart ?? 0).clamp(0, maxIdx).toInt();
+    final e = (widget.trimEnd ?? maxIdx).clamp(s, maxIdx).toInt();
     final v = <double>[];
     for (var i = s; i <= e && i < widget.fps.length; i++) {
       if (widget.fps[i] > 0) v.add(widget.fps[i]);
