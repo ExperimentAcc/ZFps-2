@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:hive/hive.dart';
 
 import '../database/app_database.dart';
+import '../models/device_info.dart';
 import '../models/device_stats.dart';
 import '../models/session.dart';
 import '../utils/frame_stats.dart';
@@ -11,8 +13,8 @@ import 'notification_service.dart';
 import 'overlay_service.dart';
 import 'shizuku_service.dart';
 
-/// Owns the lifecycle of a monitoring session: start → poll every 2 s →
-/// stop → persist a [Session] to Hive → fire the completion notification.
+/// Owns the lifecycle of a monitoring session: start -> poll every 2 s ->
+/// stop -> persist a [Session] to Hive -> fire the completion notification.
 class MonitorService extends ChangeNotifier {
   MonitorService._();
   static final MonitorService instance = MonitorService._();
@@ -22,6 +24,20 @@ class MonitorService extends ChangeNotifier {
   /// Frame timestamps are read more often than the other stats so no frames
   /// are missed on high refresh-rate screens (SurfaceFlinger keeps ~127 frames).
   static const Duration framePollInterval = Duration(milliseconds: 500);
+
+  static const String _settingsBoxName = 'settings';
+  static const String _excludeLoadingKey = 'exclude_loading_screens';
+
+  /// Minimum FPS in a 2 s poll to treat a window as active gameplay rather than
+  /// a loading screen / 0 FPS match transition.
+  static const double _loadingFpsThreshold = 5.0;
+
+  /// Single-frame gaps above this (ms) are loading stalls / pauses, not gameplay.
+  static const double _maxGameplayFrameMs = 500.0;
+
+  /// Boundary frames above this (ms) right after a loading screen / pause are
+  /// dropped so recovery transitions do not skew 1% / 0.1% lows.
+  static const double _recoveryBoundaryFrameMs = 200.0;
 
   static const MethodChannel _channel =
       MethodChannel('com.zsdev.fpsmonitor/channel');
@@ -38,9 +54,18 @@ class MonitorService extends ChangeNotifier {
   int? _fpsStartPoll;
 
   bool _isMonitoring = false;
+  bool _isPaused = false;
+  bool _excludeLoadingScreens = true;
+  bool _hasSeenActiveFps = false;
+  bool _wasFilteredOrPaused = false;
+  int _excludedSamples = 0;
+
   String? _appName;
   String? _packageName;
   DateTime? _startTime;
+  DateTime? _pauseStartedAt;
+  Duration _pausedDuration = Duration.zero;
+  DeviceInfo? _sessionDeviceInfo;
 
   DeviceStats? _current;
   double? _lastStorageSpeed;
@@ -63,18 +88,56 @@ class MonitorService extends ChangeNotifier {
   final List<double> _cpuUsageSamples = [];
   final List<double> _gpuUsageSamples = [];
   final List<double> _storageSpeedSamples = [];
+  final List<double> _batteryCurrentSamples = [];
+  final List<double> _powerWattsSamples = [];
 
   // -------------------------------------------------------------- getters
 
   bool get isMonitoring => _isMonitoring;
+  bool get isPaused => _isPaused;
+  bool get excludeLoadingScreens => _excludeLoadingScreens;
+  int get excludedSamples => _excludedSamples;
   String? get appName => _appName;
   String? get packageName => _packageName;
   DateTime? get startTime => _startTime;
   DeviceStats? get current => _current;
   int get pollCount => _pollCount;
 
-  Duration get elapsed =>
-      _startTime == null ? Duration.zero : DateTime.now().difference(_startTime!);
+  Duration get elapsed {
+    if (_startTime == null) return Duration.zero;
+    var total = DateTime.now().difference(_startTime!) - _pausedDuration;
+    if (_isPaused && _pauseStartedAt != null) {
+      total -= DateTime.now().difference(_pauseStartedAt!);
+    }
+    return total.isNegative ? Duration.zero : total;
+  }
+
+  // -------------------------------------------------------------- settings
+
+  Future<void> loadSettings() async {
+    try {
+      final box = await Hive.openBox<dynamic>(_settingsBoxName);
+      final saved = box.get(_excludeLoadingKey);
+      if (saved is bool) {
+        _excludeLoadingScreens = saved;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Failed to load settings: $e');
+    }
+  }
+
+  Future<void> setExcludeLoadingScreens(bool value) async {
+    if (_excludeLoadingScreens == value) return;
+    _excludeLoadingScreens = value;
+    notifyListeners();
+    try {
+      final box = await Hive.openBox<dynamic>(_settingsBoxName);
+      await box.put(_excludeLoadingKey, value);
+    } catch (e) {
+      debugPrint('Failed to save settings: $e');
+    }
+  }
 
   // -------------------------------------------------------------- session
 
@@ -87,6 +150,8 @@ class MonitorService extends ChangeNotifier {
     _resetSamples();
     _batteryStart = await ShizukuService.instance.getBatteryLevel();
     _batteryEnd = -1;
+    _sessionDeviceInfo =
+        await ShizukuService.instance.getDeviceInfo(refresh: true);
     _appName = appName;
     _packageName = packageName;
     _startTime = DateTime.now();
@@ -110,6 +175,33 @@ class MonitorService extends ChangeNotifier {
     return true;
   }
 
+  Future<void> pauseSession() async {
+    if (!_isMonitoring || _isPaused) return;
+    _isPaused = true;
+    _pauseStartedAt = DateTime.now();
+    _windowFrames.clear();
+    notifyListeners();
+    final cur = _current;
+    if (cur != null) {
+      await OverlayService.instance.updateOverlay(cur, paused: true);
+    }
+  }
+
+  Future<void> resumeSession() async {
+    if (!_isMonitoring || !_isPaused) return;
+    if (_pauseStartedAt != null) {
+      _pausedDuration += DateTime.now().difference(_pauseStartedAt!);
+      _pauseStartedAt = null;
+    }
+    _isPaused = false;
+    _frameReset = true;
+    _wasFilteredOrPaused = true;
+    _windowFrames.clear();
+    notifyListeners();
+    await _pollFrames();
+    await _poll();
+  }
+
   Future<Session?> stopSession() async {
     if (!_isMonitoring) return null;
 
@@ -118,19 +210,25 @@ class MonitorService extends ChangeNotifier {
     _frameTimer?.cancel();
     _frameTimer = null;
 
-    // One final sample + battery reading
-    await _pollFrames();
-    await _poll();
-    _batteryEnd = await ShizukuService.instance.getBatteryLevel();
+    if (_isPaused && _pauseStartedAt != null) {
+      _pausedDuration += DateTime.now().difference(_pauseStartedAt!);
+      _pauseStartedAt = null;
+    } else if (!_isPaused) {
+      // One final sample + battery reading when active
+      await _pollFrames();
+      await _poll();
+    }
 
+    _batteryEnd = await ShizukuService.instance.getBatteryLevel();
     await _invokeBool('stopMonitoring', const {});
 
-    final batteryDrop = (_batteryStart >= 0 && _batteryEnd >= 0 && _batteryStart >= _batteryEnd)
-        ? (_batteryStart - _batteryEnd).toDouble()
-        : 0.0;
+    final batteryDrop =
+        (_batteryStart >= 0 && _batteryEnd >= 0 && _batteryStart >= _batteryEnd)
+            ? (_batteryStart - _batteryEnd).toDouble()
+            : 0.0;
 
-    // Drop idle (0 FPS) samples at the very start / end: that is the game still
-    // loading or the user leaving the game to tap Stop, not real performance.
+    // Drop idle (0 FPS / excluded) samples at the very start / end: that is
+    // the game still loading or the user leaving the game to tap Stop.
     var trimStart = 0;
     var trimEnd = _fpsSamples.length;
     if (_realFrames) {
@@ -145,6 +243,9 @@ class MonitorService extends ChangeNotifier {
         ? _fpsSamples.sublist(trimStart, trimEnd)
         : List<double>.of(_fallbackFpsSamples);
     final lowOut = _realFrames ? _lowSamples.sublist(trimStart, trimEnd) : null;
+
+    final info = _sessionDeviceInfo ?? ShizukuService.instance.cachedDeviceInfo;
+    final pausedSecs = _pausedDuration.inSeconds;
 
     final session = Session(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -164,6 +265,13 @@ class MonitorService extends ChangeNotifier {
       frameTimeHist: _realFrames ? List<int>.of(_frameHist) : null,
       realFrameData: _realFrames,
       fpsStartPoll: _realFrames ? (_fpsStartPoll ?? 0) + trimStart : 0,
+      batteryCurrentSamples: List<double>.of(_batteryCurrentSamples),
+      powerWattsSamples: List<double>.of(_powerWattsSamples),
+      deviceModel: info?.deviceModel,
+      socName: info?.socName,
+      totalRamMb: info?.totalRamMb,
+      excludedSamples: _excludedSamples,
+      pausedSeconds: pausedSecs,
     );
 
     try {
@@ -175,6 +283,7 @@ class MonitorService extends ChangeNotifier {
     await NotificationService.instance.showSessionComplete(session);
 
     _isMonitoring = false;
+    _isPaused = false;
     _startTime = null;
     notifyListeners();
     return session;
@@ -183,6 +292,7 @@ class MonitorService extends ChangeNotifier {
   // ------------------------------------------------------------ polling
 
   Future<void> _poll() async {
+    if (_isPaused) return;
     final pkg = _packageName;
     if (pkg == null) return;
     _pollCount++;
@@ -207,15 +317,55 @@ class MonitorService extends ChangeNotifier {
 
       var stats0 = merged;
       double? low;
+      double? fpsOverride;
+
       if (_realFrames) {
-        // Real frame data wins. No frames in a window means nothing was drawn (0 FPS).
-        stats0 = merged.copyWith(fps: FrameStats.fpsOf(window) ?? 0.0);
-        low = FrameStats.lowFpsOfList(window, 0.01);
+        var frames = window;
+        if (_excludeLoadingScreens) {
+          frames = frames.where((ms) => ms <= _maxGameplayFrameMs).toList();
+          if (_wasFilteredOrPaused) {
+            var skip = 0;
+            while (skip < frames.length &&
+                frames[skip] > _recoveryBoundaryFrameMs) {
+              skip++;
+            }
+            if (skip > 0) frames = frames.sublist(skip);
+          }
+        }
+
+        final measuredFps = FrameStats.fpsOf(frames);
+        final isLoadingWindow = _excludeLoadingScreens &&
+            (measuredFps == null || measuredFps < _loadingFpsThreshold);
+
+        if (isLoadingWindow) {
+          if (_hasSeenActiveFps) {
+            _excludedSamples++;
+          }
+          _wasFilteredOrPaused = true;
+          stats0 = merged.copyWith(fps: measuredFps ?? 0.0);
+          fpsOverride = -1.0;
+          low = -1.0;
+        } else {
+          _hasSeenActiveFps = true;
+          _wasFilteredOrPaused = false;
+          if (frames.isNotEmpty) {
+            FrameStats.addAll(_frameHist, frames);
+          }
+          stats0 = merged.copyWith(fps: measuredFps ?? 0.0);
+          low = FrameStats.lowFpsOfList(frames, 0.01);
+        }
+      } else if (_excludeLoadingScreens && merged.fps <= 0) {
+        if (_hasSeenActiveFps) {
+          _excludedSamples++;
+        }
+        fpsOverride = -1.0;
+      } else {
+        if (merged.fps > 0) _hasSeenActiveFps = true;
       }
 
       _current = stats0;
-      _record(stats0, real: _realFrames, low: low);
-      await OverlayService.instance.updateOverlay(stats0);
+      _record(stats0, real: _realFrames, fpsOverride: fpsOverride, low: low);
+      await OverlayService.instance.updateOverlay(stats0, paused: _isPaused);
     } catch (e) {
       debugPrint('Poll failed: $e');
     }
@@ -223,6 +373,7 @@ class MonitorService extends ChangeNotifier {
   }
 
   Future<void> _pollFrames() async {
+    if (_isPaused) return;
     final pkg = _packageName;
     if (pkg == null || _frameBusy) return;
     _frameBusy = true;
@@ -234,7 +385,6 @@ class MonitorService extends ChangeNotifier {
         _realFrames = true;
         if (batch.frameTimesMs.isNotEmpty) {
           _windowFrames.addAll(batch.frameTimesMs);
-          FrameStats.addAll(_frameHist, batch.frameTimesMs);
         }
       }
     } catch (e) {
@@ -244,26 +394,30 @@ class MonitorService extends ChangeNotifier {
     }
   }
 
-  void _record(DeviceStats s, {required bool real, double? low}) {
-    void add(List<double> target, double v) {
-      if (v >= 0) target.add(v);
+  void _record(
+    DeviceStats s, {
+    required bool real,
+    double? fpsOverride,
+    double? low,
+  }) {
+    final recordedFps = fpsOverride ?? s.fps;
+    if (real) {
+      _fpsStartPoll ??= _pollCount - 1;
+      _fpsSamples.add(recordedFps);
+      _lowSamples.add(low ?? -1.0); // keeps both lists aligned
+    } else if (recordedFps >= 0) {
+      _fallbackFpsSamples.add(recordedFps);
     }
 
-    if (s.fps >= 0) {
-      if (real) {
-        _fpsStartPoll ??= _pollCount - 1;
-        _fpsSamples.add(s.fps);
-        _lowSamples.add(low ?? -1); // keeps both lists aligned
-      } else {
-        _fallbackFpsSamples.add(s.fps);
-      }
-    }
-    add(_cpuTempSamples, s.cpuTemp);
-    add(_gpuTempSamples, s.gpuTemp);
-    add(_freeRamSamples, s.freeRamMb);
-    add(_cpuUsageSamples, s.cpuUsage);
-    add(_gpuUsageSamples, s.gpuUsage);
-    add(_storageSpeedSamples, s.storageSpeed);
+    // Keep all per-poll metric lists aligned to the 2 s poll timeline (-1 = unknown)
+    _cpuTempSamples.add(s.cpuTemp);
+    _gpuTempSamples.add(s.gpuTemp);
+    _freeRamSamples.add(s.freeRamMb);
+    _cpuUsageSamples.add(s.cpuUsage);
+    _gpuUsageSamples.add(s.gpuUsage);
+    _storageSpeedSamples.add(s.storageSpeed);
+    _batteryCurrentSamples.add(s.batteryCurrentMa);
+    _powerWattsSamples.add(s.batteryPowerWatts);
   }
 
   void _resetSamples() {
@@ -276,12 +430,20 @@ class MonitorService extends ChangeNotifier {
     _frameBusy = false;
     _realFrames = false;
     _fpsStartPoll = null;
+    _isPaused = false;
+    _pauseStartedAt = null;
+    _pausedDuration = Duration.zero;
+    _hasSeenActiveFps = false;
+    _wasFilteredOrPaused = false;
+    _excludedSamples = 0;
     _cpuTempSamples.clear();
     _gpuTempSamples.clear();
     _freeRamSamples.clear();
     _cpuUsageSamples.clear();
     _gpuUsageSamples.clear();
     _storageSpeedSamples.clear();
+    _batteryCurrentSamples.clear();
+    _powerWattsSamples.clear();
     _current = null;
   }
 

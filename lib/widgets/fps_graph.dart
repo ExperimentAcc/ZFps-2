@@ -54,7 +54,7 @@ class _FpsGraphState extends State<FpsGraph> {
       widget.lows.length == widget.fps.length && widget.lows.any((e) => e >= 0);
 
   double get _avg {
-    final v = widget.fps.where((e) => e >= 0).toList();
+    final v = widget.fps.where((e) => e > 0).toList();
     if (v.isEmpty) return 0;
     return v.reduce((a, b) => a + b) / v.length;
   }
@@ -149,6 +149,21 @@ class _FpsGraphState extends State<FpsGraph> {
     final fps = widget.fps[i];
     final low = _hasLows ? widget.lows[i] : -1.0;
     final t = Fmt.durationHms(widget.step * i);
+    if (fps < 0) {
+      return Row(
+        children: [
+          Text(t, style: const TextStyle(color: _dim, fontSize: 11.5)),
+          const SizedBox(width: 12),
+          const Text(
+            'Loading screen excluded',
+            style: TextStyle(
+                color: Color(0xFF60A5FA),
+                fontSize: 12,
+                fontWeight: FontWeight.w700),
+          ),
+        ],
+      );
+    }
     return Row(
       children: [
         Text(t, style: const TextStyle(color: _dim, fontSize: 11.5)),
@@ -216,23 +231,33 @@ class _GraphPainter extends CustomPainter {
           center: true, size: 9.5, top: true);
     }
 
-    // Area under the FPS line
-    final area = Path()..moveTo(xOf(0), plot.bottom);
-    for (var i = 0; i < n; i++) {
-      area.lineTo(xOf(i), yOf(math.max(0, fps[i])));
+    // Area under the FPS line (break cleanly across excluded loading gaps)
+    final areaPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [_green.withOpacity(0.26), _green.withOpacity(0.0)],
+      ).createShader(plot);
+    var runStart = -1;
+    for (var i = 0; i <= n; i++) {
+      final valid = i < n && fps[i] >= 0;
+      if (valid && runStart < 0) {
+        runStart = i;
+      } else if (!valid && runStart >= 0) {
+        final runEnd = i - 1;
+        if (runEnd > runStart) {
+          final area = Path()..moveTo(xOf(runStart), plot.bottom);
+          for (var k = runStart; k <= runEnd; k++) {
+            area.lineTo(xOf(k), yOf(fps[k]));
+          }
+          area
+            ..lineTo(xOf(runEnd), plot.bottom)
+            ..close();
+          canvas.drawPath(area, areaPaint);
+        }
+        runStart = -1;
+      }
     }
-    area
-      ..lineTo(xOf(n - 1), plot.bottom)
-      ..close();
-    canvas.drawPath(
-      area,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [_green.withOpacity(0.26), _green.withOpacity(0.0)],
-        ).createShader(plot),
-    );
 
     // Average line (dashed)
     if (avg > 0) {
@@ -256,14 +281,24 @@ class _GraphPainter extends CustomPainter {
       }
     }
 
-    // FPS line, colored by zone
+    // FPS line, colored by zone (skip excluded < 0 gaps)
     final line = Paint()
       ..strokeWidth = 2.2
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
     for (var i = 1; i < n; i++) {
+      if (fps[i] < 0 || fps[i - 1] < 0) continue;
       line.color = fpsZoneColor((fps[i] + fps[i - 1]) / 2);
       canvas.drawLine(Offset(xOf(i - 1), yOf(fps[i - 1])), Offset(xOf(i), yOf(fps[i])), line);
+    }
+    for (var i = 0; i < n; i++) {
+      if (fps[i] < 0) continue;
+      final prevBad = i == 0 || fps[i - 1] < 0;
+      final nextBad = i == n - 1 || fps[i + 1] < 0;
+      if (prevBad && nextBad) {
+        canvas.drawCircle(
+            Offset(xOf(i), yOf(fps[i])), 2.2, Paint()..color = fpsZoneColor(fps[i]));
+      }
     }
 
     // Selection marker
@@ -277,17 +312,19 @@ class _GraphPainter extends CustomPainter {
           ..color = Colors.white30
           ..strokeWidth = 1,
       );
-      canvas.drawCircle(Offset(x, yOf(fps[s])), 4.5, Paint()..color = fpsZoneColor(fps[s]));
-      canvas.drawCircle(
-        Offset(x, yOf(fps[s])),
-        4.5,
-        Paint()
-          ..color = Colors.white
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5,
-      );
-      if (lows.isNotEmpty && lows[s] >= 0) {
-        canvas.drawCircle(Offset(x, yOf(lows[s])), 3.5, Paint()..color = _violet);
+      if (fps[s] >= 0) {
+        canvas.drawCircle(Offset(x, yOf(fps[s])), 4.5, Paint()..color = fpsZoneColor(fps[s]));
+        canvas.drawCircle(
+          Offset(x, yOf(fps[s])),
+          4.5,
+          Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5,
+        );
+        if (lows.isNotEmpty && lows[s] >= 0) {
+          canvas.drawCircle(Offset(x, yOf(lows[s])), 3.5, Paint()..color = _violet);
+        }
       }
     }
   }

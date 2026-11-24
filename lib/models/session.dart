@@ -66,6 +66,34 @@ class Session extends HiveObject {
   @HiveField(16)
   int? fpsStartPoll;
 
+  /// Per-poll battery current draw in mA (-1 = unknown). Null for older sessions.
+  @HiveField(17)
+  List<double>? batteryCurrentSamples;
+
+  /// Per-poll battery power draw in Watts (-1 = unknown). Null for older sessions.
+  @HiveField(18)
+  List<double>? powerWattsSamples;
+
+  /// Device model (e.g. "Samsung SM-S918B"). Null for older sessions.
+  @HiveField(19)
+  String? deviceModel;
+
+  /// Device chipset / SoC name (e.g. "Qualcomm SM8550"). Null for older sessions.
+  @HiveField(20)
+  String? socName;
+
+  /// Total device RAM in MB. Null for older sessions.
+  @HiveField(21)
+  double? totalRamMb;
+
+  /// Number of loading-screen / 0 FPS polls filtered out during the session.
+  @HiveField(22)
+  int? excludedSamples;
+
+  /// Total seconds manually paused during the session.
+  @HiveField(23)
+  int? pausedSeconds;
+
   Session({
     required this.id,
     required this.appName,
@@ -84,11 +112,24 @@ class Session extends HiveObject {
     this.frameTimeHist,
     this.realFrameData,
     this.fpsStartPoll,
+    this.batteryCurrentSamples,
+    this.powerWattsSamples,
+    this.deviceModel,
+    this.socName,
+    this.totalRamMb,
+    this.excludedSamples,
+    this.pausedSeconds,
   });
 
   // ------------------------------------------------------------ durations
 
-  Duration get duration => endTime.difference(startTime);
+  Duration get duration {
+    final raw = endTime.difference(startTime);
+    final paused = pausedSeconds ?? 0;
+    if (paused <= 0) return raw;
+    final active = raw - Duration(seconds: paused);
+    return active.isNegative ? Duration.zero : active;
+  }
 
   String get durationFormatted {
     final d = duration;
@@ -144,7 +185,18 @@ class Session extends HiveObject {
 
   double get avgStorageSpeed => _avg(storageSpeedSamples);
 
-  int get sampleCount => fpsSamples.length;
+  List<double> get batteryCurrents => batteryCurrentSamples ?? const <double>[];
+  List<double> get powerWatts => powerWattsSamples ?? const <double>[];
+
+  double get avgBatteryCurrentMa =>
+      _hasData(batteryCurrents) ? _avg(batteryCurrents) : -1;
+  double get maxBatteryCurrentMa =>
+      _hasData(batteryCurrents) ? _max(batteryCurrents) : -1;
+
+  double get avgPowerWatts => _hasData(powerWatts) ? _avg(powerWatts) : -1;
+  double get maxPowerWatts => _hasData(powerWatts) ? _max(powerWatts) : -1;
+
+  int get sampleCount => fpsSamples.where((e) => e >= 0).length;
 
   // ------------------------------------------------------- frame-time stats
 

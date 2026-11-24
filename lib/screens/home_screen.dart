@@ -229,6 +229,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   app: _selectedApp,
                   onTap: _pickApp,
                 ),
+                const SizedBox(height: 12),
+                _ExcludeLoadingCard(
+                  enabled: monitor.excludeLoadingScreens,
+                  onChanged: (v) => monitor.setExcludeLoadingScreens(v),
+                ),
                 if (monitor.isMonitoring) ...[
                   const SizedBox(height: 14),
                   _LivePanel(monitor: monitor),
@@ -267,21 +272,58 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (monitor.isMonitoring) {
-      return SizedBox(
-        height: 56,
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: _stop,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _red,
-            foregroundColor: const Color(0xFF210A0A),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            elevation: 0,
+      final paused = monitor.isPaused;
+      return Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: 56,
+              child: ElevatedButton.icon(
+                onPressed: paused
+                    ? () => monitor.resumeSession()
+                    : () => monitor.pauseSession(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: paused ? _green : _amber,
+                  foregroundColor: const Color(0xFF14181F),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ),
+                icon: Icon(
+                  paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                  size: 24,
+                ),
+                label: Text(
+                  paused ? 'RESUME' : 'PAUSE',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, letterSpacing: 1.0),
+                ),
+              ),
+            ),
           ),
-          icon: const Icon(Icons.stop_rounded, size: 26),
-          label: const Text('STOP MONITORING',
-              style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.1)),
-        ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SizedBox(
+              height: 56,
+              child: ElevatedButton.icon(
+                onPressed: _stop,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _red,
+                  foregroundColor: const Color(0xFF210A0A),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ),
+                icon: const Icon(Icons.stop_rounded, size: 24),
+                label: const Text(
+                  'STOP',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800, letterSpacing: 1.0),
+                ),
+              ),
+            ),
+          ),
+        ],
       );
     }
 
@@ -662,14 +704,17 @@ class _LivePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = monitor.current;
+    final paused = monitor.isPaused;
     final fps = s?.fps ?? -1;
-    final fpsColor = fps < 0
-        ? _textDim
-        : fps >= 50
-            ? _green
-            : fps >= 30
-                ? _amber
-                : _red;
+    final fpsColor = paused
+        ? _amber
+        : fps < 0
+            ? _textDim
+            : fps >= 50
+                ? _green
+                : fps >= 30
+                    ? _amber
+                    : _red;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
@@ -689,15 +734,15 @@ class _LivePanel extends StatelessWidget {
               Container(
                 width: 8,
                 height: 8,
-                decoration: const BoxDecoration(
-                  color: _red,
+                decoration: BoxDecoration(
+                  color: paused ? _amber : _red,
                   shape: BoxShape.circle,
                 ),
               ),
               const SizedBox(width: 8),
-              const Text('LIVE',
+              Text(paused ? 'PAUSED' : 'LIVE',
                   style: TextStyle(
-                      color: _red,
+                      color: paused ? _amber : _red,
                       fontWeight: FontWeight.w900,
                       letterSpacing: 2,
                       fontSize: 11)),
@@ -718,7 +763,7 @@ class _LivePanel extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                s == null ? '--' : Fmt.fps(fps),
+                paused ? 'II' : (s == null ? '--' : Fmt.fps(fps)),
                 style: TextStyle(
                   fontSize: 72,
                   fontWeight: FontWeight.w900,
@@ -727,14 +772,21 @@ class _LivePanel extends StatelessWidget {
                   letterSpacing: -2,
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10, left: 8),
-                child: Text('FPS',
-                    style: TextStyle(
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10, left: 8),
+                child: Text(paused ? 'PAUSED' : 'FPS',
+                    style: const TextStyle(
                         color: _textDim, fontWeight: FontWeight.w800, fontSize: 15)),
               ),
             ],
           ),
+          if (monitor.excludedSamples > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              '${monitor.excludedSamples} loading spike${monitor.excludedSamples == 1 ? '' : 's'} excluded',
+              style: const TextStyle(fontSize: 11, color: _blue),
+            ),
+          ],
           const SizedBox(height: 12),
           GridView.count(
             shrinkWrap: true,
@@ -779,6 +831,18 @@ class _LivePanel extends StatelessWidget {
                 label: 'STORAGE',
                 value: Fmt.speed(s?.storageSpeed ?? -1),
                 accent: const Color(0xFF34D399),
+              ),
+              StatCard(
+                icon: Icons.bolt_outlined,
+                label: 'BATTERY mA',
+                value: Fmt.currentMa(s?.batteryCurrentMa ?? -1),
+                accent: _amber,
+              ),
+              StatCard(
+                icon: Icons.power_outlined,
+                label: 'POWER DRAW',
+                value: Fmt.watts(s?.batteryPowerWatts ?? -1),
+                accent: const Color(0xFFFB923C),
               ),
             ],
           ),
@@ -839,6 +903,65 @@ class _CustomizeCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Toggle card to filter out 0 FPS spikes and loading screens from 1% / 0.1% lows.
+class _ExcludeLoadingCard extends StatelessWidget {
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  const _ExcludeLoadingCard({
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: _blue.withOpacity(0.14),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(Icons.filter_alt_outlined, color: _blue, size: 20),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Exclude loading screens',
+                    style: TextStyle(
+                        color: _text,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700)),
+                SizedBox(height: 2),
+                Text(
+                  'Filter 0 FPS & transition spikes from 1% / 0.1% lows',
+                  style: TextStyle(color: _textDim, fontSize: 11.5),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: enabled,
+            activeColor: _green,
+            onChanged: onChanged,
+          ),
+        ],
       ),
     );
   }

@@ -22,7 +22,9 @@ import java.util.concurrent.Executors
  *  - bindShizuku                 -> Boolean (starts async bind + permission request)
  *  - runShell (command)          -> String (stdout+stderr, or "ERR: ...")
  *  - getStats (packageName,      -> {fps, cpuTemp, gpuTemp, freeRamMb, cpuUsage,
- *            includeStorage)        gpuUsage, storageSpeed, refreshRate}
+ *            includeStorage)        gpuUsage, storageSpeed, refreshRate,
+ *                                   batteryCurrentMa, batteryPowerWatts}
+ *  - getDeviceInfo               -> {deviceModel, socName, totalRamMb}
  *  - getFrames (packageName,     -> {frames: List<Double> ms, valid: Boolean} new frame times
  *            reset)                  since the previous call (see FrameSampler)
  *  - shareFile (bytes, fileName, -> Boolean (opens the Android share sheet for a CSV / PNG)
@@ -96,6 +98,20 @@ class PlatformChannelHandler(
                     }
                     replyOnUi(result) { stats }
                 }
+            }
+
+            "getDeviceInfo" -> executor.execute {
+                val info = try {
+                    metrics.deviceInfo(shizuku)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "deviceInfo() failed: ${t.message}")
+                    mapOf(
+                        "deviceModel" to (Build.MODEL ?: "Android Device"),
+                        "socName" to (Build.HARDWARE ?: "Unknown SoC"),
+                        "totalRamMb" to -1.0
+                    )
+                }
+                replyOnUi(result) { info }
             }
 
             "getFrames" -> {
@@ -196,13 +212,27 @@ class PlatformChannelHandler(
             }
 
             "updateOverlay" -> replyOnUi(result) {
-                val fps = call.argument<Double>("fps") ?: -1.0
-                val cpuTemp = call.argument<Double>("cpuTemp") ?: -1.0
-                val gpuTemp = call.argument<Double>("gpuTemp") ?: -1.0
-                val freeRam = call.argument<Double>("freeRamMb") ?: -1.0
-                val cpuUsage = call.argument<Double>("cpuUsage") ?: -1.0
-                val gpuUsage = call.argument<Double>("gpuUsage") ?: -1.0
-                OverlayService.update(appContext, fps, cpuTemp, gpuTemp, freeRam, cpuUsage, gpuUsage)
+                val fps = call.argument<Number>("fps")?.toDouble() ?: -1.0
+                val cpuTemp = call.argument<Number>("cpuTemp")?.toDouble() ?: -1.0
+                val gpuTemp = call.argument<Number>("gpuTemp")?.toDouble() ?: -1.0
+                val freeRam = call.argument<Number>("freeRamMb")?.toDouble() ?: -1.0
+                val cpuUsage = call.argument<Number>("cpuUsage")?.toDouble() ?: -1.0
+                val gpuUsage = call.argument<Number>("gpuUsage")?.toDouble() ?: -1.0
+                val batteryCurrentMa = call.argument<Number>("batteryCurrentMa")?.toDouble() ?: -1.0
+                val batteryPowerWatts = call.argument<Number>("batteryPowerWatts")?.toDouble() ?: -1.0
+                val paused = call.argument<Boolean>("paused") ?: false
+                OverlayService.update(
+                    appContext,
+                    fps,
+                    cpuTemp,
+                    gpuTemp,
+                    freeRam,
+                    cpuUsage,
+                    gpuUsage,
+                    batteryCurrentMa,
+                    batteryPowerWatts,
+                    paused
+                )
                 true
             }
 
@@ -311,7 +341,9 @@ class PlatformChannelHandler(
         "cpuUsage" to -1.0,
         "gpuUsage" to -1.0,
         "storageSpeed" to -1.0,
-        "refreshRate" to 60.0
+        "refreshRate" to 60.0,
+        "batteryCurrentMa" to -1.0,
+        "batteryPowerWatts" to -1.0
     )
 
     companion object {

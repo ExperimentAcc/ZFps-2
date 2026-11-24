@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../database/app_database.dart';
+import '../models/device_info.dart';
 import '../models/session.dart';
-import '../utils/format_utils.dart';
 import '../services/export_service.dart';
+import '../services/shizuku_service.dart';
 import '../utils/csv_export.dart';
+import '../utils/format_utils.dart';
 import '../widgets/fps_graph.dart';
 import '../widgets/report_share.dart';
 import '../widgets/stat_card.dart';
@@ -48,7 +50,10 @@ class _ReportScreenState extends State<ReportScreen> {
 
   Future<void> _exportAll() async {
     final ok = await ExportService.instance.shareBytes(
-      CsvExport.allSessions(_sessions),
+      CsvExport.allSessions(
+        _sessions,
+        fallbackDevice: ShizukuService.instance.cachedDeviceInfo,
+      ),
       fileName: CsvExport.allSessionsFileName(),
       mimeType: 'text/csv',
       title: 'FPS Monitor - all sessions',
@@ -290,6 +295,38 @@ class _SessionCard extends StatelessWidget {
           children: [
             const Divider(color: Color(0xFF232C3D), height: 1),
             const SizedBox(height: 12),
+            if (_deviceHeader(session).isNotEmpty) ...[
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A2130),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF232C3D)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.smartphone_rounded,
+                        size: 15, color: Color(0xFF8B94A7)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _deviceHeader(session),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: Color(0xFFB9C2D0),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             Row(
               children: [
                 Expanded(
@@ -345,7 +382,7 @@ class _SessionCard extends StatelessWidget {
                 ),
               ],
             ),
-            if (session.fpsSamples.length >= 2) ...[
+            if (session.fpsSamples.where((e) => e >= 0).length >= 2) ...[
               const SizedBox(height: 12),
               _GraphCard(session: session),
             ],
@@ -371,6 +408,20 @@ class _SessionCard extends StatelessWidget {
               label: 'Battery drop',
               value: '${session.batteryDropPercent.toStringAsFixed(0)}%',
               accent: const Color(0xFFFBBF24),
+            ),
+            _StatLine(
+              icon: Icons.bolt_outlined,
+              label: 'Battery current (avg / max)',
+              value:
+                  '${Fmt.currentMa(session.avgBatteryCurrentMa)} / ${Fmt.currentMa(session.maxBatteryCurrentMa)}',
+              accent: const Color(0xFFFBBF24),
+            ),
+            _StatLine(
+              icon: Icons.power_outlined,
+              label: 'Power draw (avg / max)',
+              value:
+                  '${Fmt.watts(session.avgPowerWatts)} / ${Fmt.watts(session.maxPowerWatts)}',
+              accent: const Color(0xFFFB923C),
             ),
             _StatLine(
               icon: Icons.memory_outlined,
@@ -408,6 +459,20 @@ class _SessionCard extends StatelessWidget {
               value: Fmt.mb(session.avgFreeRam),
               accent: const Color(0xFF4ADE80),
             ),
+            if ((session.excludedSamples ?? 0) > 0)
+              _StatLine(
+                icon: Icons.filter_alt_outlined,
+                label: 'Loading spikes excluded',
+                value: '${session.excludedSamples} samples',
+                accent: const Color(0xFF60A5FA),
+              ),
+            if ((session.pausedSeconds ?? 0) > 0)
+              _StatLine(
+                icon: Icons.pause_circle_outline,
+                label: 'Paused time (excluded)',
+                value: Fmt.durationShort(Duration(seconds: session.pausedSeconds!)),
+                accent: const Color(0xFFFBBF24),
+              ),
             _StatLine(
               icon: Icons.schedule_outlined,
               label: 'Duration',
@@ -506,6 +571,15 @@ class _StatLine extends StatelessWidget {
   }
 }
 
+String _deviceHeader(Session s) {
+  final fallback = ShizukuService.instance.cachedDeviceInfo;
+  return DeviceInfo.formatSummary(
+    s.deviceModel ?? fallback?.deviceModel,
+    s.socName ?? fallback?.socName,
+    s.totalRamMb ?? fallback?.totalRamMb,
+  );
+}
+
 String _fpsOrDash(double? v) => v == null ? '--' : v.toStringAsFixed(0);
 
 Color _zone(double? v) => v == null ? const Color(0xFF8B94A7) : fpsZoneColor(v);
@@ -549,7 +623,10 @@ class _GraphCard extends StatelessWidget {
 
 Future<void> _exportSessionCsv(BuildContext context, Session session) async {
   final ok = await ExportService.instance.shareBytes(
-    CsvExport.sessionSamples(session),
+    CsvExport.sessionSamples(
+      session,
+      fallbackDevice: ShizukuService.instance.cachedDeviceInfo,
+    ),
     fileName: '${CsvExport.baseName(session)}.csv',
     mimeType: 'text/csv',
     title: 'FPS samples - ${session.appName}',

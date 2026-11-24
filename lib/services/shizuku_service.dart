@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 
+import '../models/device_info.dart';
 import '../models/device_stats.dart';
 import '../models/installed_app.dart';
 
@@ -70,6 +71,24 @@ class ShizukuService {
   static final ShizukuService instance = ShizukuService._();
 
   static const MethodChannel _channel = MethodChannel('com.zsdev.fpsmonitor/channel');
+
+  DeviceInfo? _cachedDeviceInfo;
+
+  DeviceInfo? get cachedDeviceInfo => _cachedDeviceInfo;
+
+  Future<DeviceInfo?> getDeviceInfo({bool refresh = false}) async {
+    if (!refresh && _cachedDeviceInfo != null) return _cachedDeviceInfo;
+    try {
+      final res = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+      if (res == null) return _cachedDeviceInfo;
+      _cachedDeviceInfo = DeviceInfo.fromMap(res);
+      return _cachedDeviceInfo;
+    } on PlatformException {
+      return _cachedDeviceInfo;
+    } on MissingPluginException {
+      return _cachedDeviceInfo;
+    }
+  }
 
   Future<ShizukuStatus> checkShizuku() async {
     try {

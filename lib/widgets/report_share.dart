@@ -3,8 +3,10 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import '../models/device_info.dart';
 import '../models/session.dart';
 import '../services/export_service.dart';
+import '../services/shizuku_service.dart';
 import '../utils/csv_export.dart';
 import '../utils/format_utils.dart';
 import 'fps_graph.dart';
@@ -168,7 +170,16 @@ class ReportShareCard extends StatelessWidget {
       (Icons.grid_view_outlined, 'GPU usage', Fmt.percent(s.avgGpuUsage)),
       (Icons.storage_outlined, 'Free RAM', Fmt.mb(s.avgFreeRam)),
       (Icons.battery_6_bar_outlined, 'Battery drop', '${s.batteryDropPercent.toStringAsFixed(0)}%'),
+      (Icons.bolt_outlined, 'Battery current', Fmt.currentMa(s.avgBatteryCurrentMa)),
+      (Icons.power_outlined, 'Power draw', Fmt.watts(s.avgPowerWatts)),
     ];
+
+    final fallbackDevice = ShizukuService.instance.cachedDeviceInfo;
+    final deviceHeader = DeviceInfo.formatSummary(
+      s.deviceModel ?? fallbackDevice?.deviceModel,
+      s.socName ?? fallbackDevice?.socName,
+      s.totalRamMb ?? fallbackDevice?.totalRamMb,
+    );
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -217,6 +228,36 @@ class ReportShareCard extends StatelessWidget {
             '${Fmt.dateTime(s.startTime)}  •  ${s.durationFormatted}',
             style: const TextStyle(color: _dim, fontSize: 12),
           ),
+          if (deviceHeader.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111826),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _border),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.smartphone_rounded, size: 14, color: _dim),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      deviceHeader,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFB9C2D0),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
 
           // Big numbers
@@ -230,7 +271,7 @@ class ReportShareCard extends StatelessWidget {
           ),
 
           // Graph
-          if (s.fpsSamples.length >= 2) ...[
+          if (s.fpsSamples.where((e) => e >= 0).length >= 2) ...[
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),

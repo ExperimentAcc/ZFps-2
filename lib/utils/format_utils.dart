@@ -15,6 +15,12 @@ class Fmt {
 
   static String ramFree(double v) => v >= 0 ? '${v.toStringAsFixed(0)} MB free' : '-- MB';
 
+  static String currentMa(double v) =>
+      v >= 0 ? '${v.toStringAsFixed(0)} mA' : '--';
+
+  static String watts(double v) =>
+      v >= 0 ? '${v.toStringAsFixed(2)} W' : '--';
+
   static const List<String> _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
