@@ -56,6 +56,11 @@ class SessionSummary {
   int get hwStart => (session.fpsStartPoll ?? 0) + trimStart;
   int get hwEnd => (session.fpsStartPoll ?? 0) + trimEnd;
 
+  /// Exact timestamp (seconds from session start) of the first & last sample
+  /// in this view, matching CSV `time_s` and graph axis timestamps.
+  int get startSeconds => hwStart * 2;
+  int get endSeconds => hwEnd * 2;
+
   List<double> _hwSlice(List<double> xs) {
     if (!isTrimmed) return xs;
     if (xs.isEmpty || hwStart >= xs.length) return const <double>[];
@@ -95,11 +100,14 @@ class SessionSummary {
       ? fpsSamples.where((e) => e >= 0).length
       : session.sampleCount;
 
+  int get excludedCount => isTrimmed
+      ? fpsSamples.where((e) => e < 0).length
+      : (session.excludedSamples ?? 0);
+
   Duration get duration {
     if (!isTrimmed) return session.duration;
-    final secs = (trimEnd - trimStart + 1) * 2;
-    final full = session.duration;
-    if (full.inSeconds > 0 && secs > full.inSeconds) return full;
+    // Match exact elapsed time between startSeconds and endSeconds.
+    final secs = math.max(0, endSeconds - startSeconds);
     return Duration(seconds: secs);
   }
 
@@ -239,5 +247,15 @@ class SessionSummary {
   double get maxPowerWatts {
     final s = _hwSlice(session.powerWatts);
     return _hasData(s) ? _max(s) : -1;
+  }
+
+  /// Aligns a hardware sample list (indexed from poll 0) onto [Session.fpsSamples].
+  List<double> alignToFpsTimeline(List<double> hwSamples) {
+    final n = session.fpsSamples.length;
+    final offset = session.fpsStartPoll ?? 0;
+    return List<double>.generate(n, (j) {
+      final idx = offset + j;
+      return (idx >= 0 && idx < hwSamples.length) ? hwSamples[idx] : -1.0;
+    });
   }
 }

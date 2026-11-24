@@ -380,6 +380,7 @@ class ReportShareCard extends StatelessWidget {
                   FpsGraph(
                     fps: view.fpsSamples,
                     lows: view.lowSamples,
+                    startOffset: Duration(seconds: view.startSeconds),
                     interactive: false,
                   ),
                 ],

@@ -192,8 +192,8 @@ class CsvExport {
     if (trimmed) {
       b.writeln(_row([
         'trimmed_window',
-        '${Fmt.durationHms(Duration(seconds: summary.trimStart * stepSeconds))} - '
-            '${Fmt.durationHms(Duration(seconds: summary.trimEnd * stepSeconds))}',
+        '${Fmt.durationHms(Duration(seconds: summary.startSeconds))} - '
+            '${Fmt.durationHms(Duration(seconds: summary.endSeconds))}',
       ]));
     }
 
