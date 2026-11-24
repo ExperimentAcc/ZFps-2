@@ -1,16 +1,17 @@
-name: Overwrite Files from ZIP
+name: Overwrite Files from Root ZIP
 
 on:
   workflow_dispatch:
     inputs:
-      zip_url:
-        description: 'Direct download URL for ZFps-changed-files.zip'
+      zip_filename:
+        description: 'Name of the ZIP file in the repository root'
         required: true
+        default: 'ZFps-changed-files.zip'
         type: string
       commit_message:
         description: 'Commit message for the overwritten files'
         required: false
-        default: 'chore: overwrite files from ZFps-changed-files.zip'
+        default: 'chore: extract and overwrite files from ZFps-changed-files.zip'
         type: string
 
 permissions:
@@ -23,20 +24,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download and extract ZIP
+      - name: Extract ZIP and overwrite existing files
         run: |
-          curl -L "${{ inputs.zip_url }}" -o ZFps-changed-files.zip
-          unzip -o ZFps-changed-files.zip -d .
-          rm -f ZFps-changed-files.zip
+          ZIP_FILE="${{ inputs.zip_filename }}"
+          
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "Error: $ZIP_FILE not found in repository root!"
+            exit 1
+          fi
 
-      - name: Check for changes and commit
+          unzip -o "$ZIP_FILE" -d .
+          rm -f "$ZIP_FILE"
+
+      - name: Compare, commit, and push changes
         run: |
           git status
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@://github.com"
           git add -A
+          
           if git diff --staged --quiet; then
-            echo "No changes detected compared to existing files."
+            echo "No differences found after extraction."
           else
             git commit -m "${{ inputs.commit_message }}"
             git push
